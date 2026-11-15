@@ -18,7 +18,7 @@ import { assertWithinQuota } from '../ai/usage';
 import type { AuthUser } from '../middleware/auth';
 import { computeAccess, listMemberIds, requireMember } from './conversations';
 import type { MessageRow } from './dto';
-import { ftsIndexStatements, getMessageRow, hydrateMessages, insertMessage } from './messages';
+import { findByClientId, ftsIndexStatements, getMessageRow, hydrateMessages, insertMessage, isClientIdConflict } from './messages';
 import { cancelRun, startRun } from './run-control';
 import { createRun, runToDto, type RunRow } from './runs';
 import { displayNames, conversationLabel } from './transcript';
@@ -40,12 +40,16 @@ export interface TurnInput {
   shared?: SharedInput;
   /** `task` = started from the tasks panel; behaves the same, but is labelled so in the run list. */
   kind?: 'chat' | 'task';
+  /** Idempotency token: the same token twice returns the first turn instead of asking the model again. */
+  clientId?: string | null;
 }
 
 export interface TurnResult {
   userMessage: MessageDto;
   assistantMessage: MessageDto;
   run: RunDto;
+  /** True when this answer repeats an earlier identical request (nothing new was started). */
+  duplicate?: boolean;
 }
 
 /* ------------------------------------------------------------------------------------------------ guards */
@@ -214,7 +218,23 @@ async function newRunFor(
   return run;
 }
 
+/** The turn already started for this idempotency token, rebuilt from what is stored. */
+async function existingTurn(env: Env, user: AuthUser, thread: ThreadRow, clientId: string): Promise<TurnResult | null> {
+  const userMessage = await findByClientId(env, thread.conversation_id, user.id, clientId);
+  if (!userMessage) return null;
+  const runRow = await first<RunRow>(env.DB.prepare('SELECT * FROM runs WHERE trigger_message_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1').bind(userMessage.id, user.id));
+  if (!runRow?.result_message_id) return null;
+  const assistantRow = await getMessageRow(env, runRow.result_message_id);
+  if (!assistantRow) return null;
+  const [assistantMessage] = await hydrateMessages(env, [assistantRow], user.id);
+  return { userMessage, assistantMessage: assistantMessage!, run: await runToDto(env, runRow), duplicate: true };
+}
+
 export async function startAiTurn(env: Env, user: AuthUser, thread: ThreadRow, input: TurnInput): Promise<TurnResult> {
+  if (input.clientId) {
+    const again = await existingTurn(env, user, thread, input.clientId);
+    if (again) return again;
+  }
   requireAiBackend(env);
   const body = input.body?.trim() ? input.body.trim() : null;
   if (body && body.length > LIMITS.aiPromptMaxChars) throw badRequest(`Messages to AMIN AI can be at most ${LIMITS.aiPromptMaxChars} characters`, undefined, 'MESSAGE_TOO_LONG');
@@ -228,14 +248,28 @@ export async function startAiTurn(env: Env, user: AuthUser, thread: ThreadRow, i
   const agentId = input.agentId ?? thread.agent_id;
   const modelId = input.modelId === undefined ? thread.model_id : input.modelId;
 
-  const userMessage = await insertMessage(env, {
-    conversationId: thread.conversation_id,
-    threadId: thread.id,
-    senderId: user.id,
-    body,
-    meta: shared ? { shared } : null,
-    fileIds,
-  });
+  let userMessage: MessageDto;
+  try {
+    userMessage = await insertMessage(env, {
+      conversationId: thread.conversation_id,
+      threadId: thread.id,
+      senderId: user.id,
+      body,
+      meta: shared ? { shared } : null,
+      fileIds,
+      clientId: input.clientId ?? null,
+    });
+  } catch (err) {
+    // two identical requests raced: the loser gets the winner's turn (give it a moment to finish creating the run)
+    if (input.clientId && isClientIdConflict(err)) {
+      for (let i = 0; i < 20; i++) {
+        const again = await existingTurn(env, user, thread, input.clientId);
+        if (again) return again;
+        await new Promise<void>((r) => setTimeout(r, 50));
+      }
+    }
+    throw err;
+  }
   const assistant = await createAssistantPlaceholder(env, { conversationId: thread.conversation_id, threadId: thread.id, agentId });
   const goal = body ?? (shared ? `Review ${shared.count} shared message(s)` : 'Review the attached file(s)');
   const run = await newRunFor(env, user, thread, userMessage, assistant, agentId, modelId, goal, false, input.kind ?? 'chat');

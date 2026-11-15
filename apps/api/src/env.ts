@@ -20,6 +20,11 @@ export interface Env {
   ENVIRONMENT: string;
   /** Comma-separated list of extra browser origins allowed by CORS / WebSocket. */
   ALLOWED_ORIGINS?: string;
+  /**
+   * Alternative addresses of this service (reverse-proxy relays, see docs/connectivity.md), comma separated. Advertised by
+   * GET /api/health so clients can keep working when the main address is blocked, and trusted as browser origins.
+   */
+  PUBLIC_ENDPOINTS?: string;
   /** Comma-separated usernames that get the admin role. */
   ADMIN_USERNAMES?: string;
   DEFAULT_DAILY_TOKENS?: string;
@@ -38,6 +43,11 @@ export interface Env {
   DRIVE_FOLDER_NAME?: string;
 
   // ---- secrets (wrangler secret put …)
+  /**
+   * Shared secret of the operator's relays. A request that carries it in `X-Relay-Secret` may tell us the real client address in
+   * `X-Forwarded-For`; without it every user behind a relay would share the relay's address (and its rate limits).
+   */
+  RELAY_SECRET?: string;
   /** Web-search provider for the research agent: "brave" | "tavily". Unset → web search is not connected. */
   SEARCH_PROVIDER?: string;
   SEARCH_API_KEY?: string;

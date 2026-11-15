@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { parseEndpointList, type HealthDto } from '@aminchat/shared';
 import { adminRoutes } from './routes/admin';
 import { aiRoutes } from './routes/ai';
 import { authRoutes } from './routes/auth';
@@ -17,7 +18,9 @@ export function buildApp() {
   app.use('/api/*', cors);
   app.onError(onError);
 
-  app.get('/api/health', (c) => c.json({ ok: true, service: 'amin-chat', time: Date.now(), environment: c.env.ENVIRONMENT }));
+  app.get('/api/health', (c) =>
+    c.json({ ok: true, service: 'amin-chat', time: Date.now(), environment: c.env.ENVIRONMENT, endpoints: parseEndpointList(c.env.PUBLIC_ENDPOINTS) } satisfies HealthDto),
+  );
 
   app.route('/api/auth', authRoutes);
   app.route('/api/users', userRoutes);

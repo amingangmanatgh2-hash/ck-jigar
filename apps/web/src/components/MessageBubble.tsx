@@ -35,6 +35,8 @@ export interface BubbleProps {
   onToggleSelect?: (m: MessageDto) => void;
   /** Name of the user who invoked the assistant in a shared chat. */
   invokerName?: string | null;
+  /** Set for a message that is not on the server yet (written offline): shows its state and what the user can do about it. */
+  outbox?: { state: 'pending' | 'failed'; errorText?: string; onRetry: () => void; onDiscard: () => void };
 }
 
 const bodyText = (m: MessageDto, decrypted?: string | null): string | null => (m.cipher ? (decrypted ?? null) : m.body);
@@ -231,6 +233,23 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
             {!!ai?.regenerations && <span className="muted small">{t('msg.regenerated', { n: ai.regenerations })}</span>}
             {m.editedAt && <span className="muted small">{t('msg.edited')}</span>}
             {m.cipher && <Icon name="lock" size={12} />}
+            {props.outbox?.state === 'pending' && (
+              <span className="outbox-state" data-testid="outbox-pending">
+                <Icon name="clock" size={12} /> {t('outbox.waiting')}
+              </span>
+            )}
+            {props.outbox?.state === 'failed' && (
+              <span className="outbox-state outbox-failed" role="alert" data-testid="outbox-failed">
+                <Icon name="alert" size={12} /> {t('outbox.failed')}
+                {props.outbox.errorText ? ` — ${props.outbox.errorText}` : ''}
+                <button type="button" className="link-btn" onClick={props.outbox.onRetry}>
+                  {t('outbox.retry')}
+                </button>
+                <button type="button" className="link-btn" onClick={props.outbox.onDiscard}>
+                  {t('outbox.discard')}
+                </button>
+              </span>
+            )}
             <time className="muted small" dateTime={new Date(m.createdAt).toISOString()}>
               {fmtTime(m.createdAt, locale)}
             </time>

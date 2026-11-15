@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { RealtimeEvent } from '@aminchat/shared';
+import type { PollResponse, RealtimeEvent } from '@aminchat/shared';
 import { sha256Hex, randomToken } from '../lib/crypto';
 import type { Env } from '../env';
 
@@ -8,6 +8,17 @@ interface Attachment {
 }
 
 const TICKET_TTL_MS = 60_000;
+
+/** Long-poll fallback (networks where WebSockets are blocked or keep dropping). */
+export const POLL = {
+  /** Events kept for pollers. A poller that falls further behind than this is told to resync instead. */
+  ringMax: 400,
+  /** Events are only buffered while somebody has polled this recently, so WebSocket-only users cost nothing. */
+  activeMs: 90_000,
+  /** After the first event of a burst the response waits this long to carry the rest of it (AI streaming). */
+  coalesceMs: 150,
+  maxWaitMs: 25_000,
+} as const;
 
 /**
  * One Durable Object per user. Holds all of the user's live WebSocket connections (web tabs, Android app)
@@ -19,6 +30,14 @@ const TICKET_TTL_MS = 60_000;
  */
 export class UserHub extends DurableObject<Env> {
   private lastTyping = new Map<string, number>();
+
+  // Long-poll buffer. It lives in memory ON PURPOSE: if this object is evicted the next poll sees a new epoch and the client
+  // simply refetches what it shows (the same recovery as after a WebSocket reconnect), so nothing can be silently lost.
+  private readonly epoch = randomToken(9);
+  private seq = 0;
+  private ring: { seq: number; ev: RealtimeEvent }[] = [];
+  private lastPollAt = 0;
+  private waiters = new Set<() => void>();
 
   // ------------------------------------------------------------------ RPC (called from the Worker / other DOs)
 
@@ -49,7 +68,42 @@ export class UserHub extends DurableObject<Env> {
         // socket is closing; the runtime will call webSocketClose
       }
     }
+    if (Date.now() - this.lastPollAt < POLL.activeMs) {
+      for (const ev of list) this.ring.push({ seq: ++this.seq, ev });
+      if (this.ring.length > POLL.ringMax) this.ring.splice(0, this.ring.length - POLL.ringMax);
+      for (const wake of [...this.waiters]) wake();
+    }
     return delivered;
+  }
+
+  /**
+   * Long poll. `cursor` = what the client has already seen (null on the first call). Returns the events after it, waiting up to
+   * `waitMs` for the first one. `reset` tells the client it cannot trust its view (buffer lost or overrun) and must refetch.
+   */
+  async poll(cursor: { epoch: string; seq: number } | null, waitMs: number): Promise<PollResponse> {
+    this.lastPollAt = Date.now();
+    const head = (events: RealtimeEvent[], reset: boolean): PollResponse => ({ epoch: this.epoch, seq: this.seq, events, reset });
+    if (!cursor) return head([], false);
+    const oldest = this.ring[0]?.seq ?? this.seq + 1;
+    if (cursor.epoch !== this.epoch || cursor.seq > this.seq || cursor.seq < oldest - 1) return head([], true);
+
+    const pending = () => this.ring.filter((e) => e.seq > cursor.seq);
+    if (pending().length === 0 && waitMs > 0) {
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          this.waiters.delete(done);
+          resolve();
+        };
+        const timer = setTimeout(done, Math.min(waitMs, POLL.maxWaitMs));
+        this.waiters.add(done);
+      });
+      if (pending().length > 0) await new Promise<void>((r) => setTimeout(r, POLL.coalesceMs)); // let a burst finish
+    }
+    this.lastPollAt = Date.now();
+    const events = pending();
+    const upTo = events.at(-1)?.seq ?? cursor.seq;
+    return { epoch: this.epoch, seq: upTo, events: events.map((e) => e.ev), reset: false };
   }
 
   async socketCount(): Promise<number> {

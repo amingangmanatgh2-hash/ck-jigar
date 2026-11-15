@@ -30,6 +30,8 @@ export const RATE_LIMITS = {
   api: { limit: 600, windowSec: 60 },
   /** Calls that start AI work (messages to AMIN AI, mentions, runs, regenerate), per user. */
   ai: { limit: 30, windowSec: 60 },
+  /** Long-poll fallback for realtime: one call per ≤25 s when idle, up to a few per second while an answer streams. */
+  poll: { limit: 240, windowSec: 60 },
   /** Heavy AI calls (transcription, file conversion, image generation), per user. */
   aiHeavy: { limit: 12, windowSec: 60 },
   /** File uploads, per user. */

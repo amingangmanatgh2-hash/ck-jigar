@@ -10,6 +10,8 @@ import { Button, ErrorBanner, IconButton, Spinner } from '../components/ui';
 import { conversationTitle } from '../lib/conv';
 import { encryptText, decryptText } from '../lib/e2ee';
 import { Ai, Convs } from '../lib/endpoints';
+import { newClientId } from '../lib/api';
+import { clientIdOfPending, isOffline, isPendingId, pendingAsMessages } from '../lib/outbox';
 import { dayKey, fmtDayLabel } from '../lib/format';
 import { useErrorText, useLocale, useT, type Key } from '../lib/i18n';
 import { realtime } from '../lib/realtime';
@@ -18,6 +20,7 @@ import { isActiveRun, newerRun, mergeApproval, mergeStep } from '../lib/runs';
 import { activeConversation, markRead, upsertConversation, useConversation } from '../state/conversations';
 import { useStickToBottom } from '../lib/useStickToBottom';
 import { useE2eeKey } from '../state/e2ee';
+import { outbox, useOutbox } from '../state/outbox';
 import { useUser } from '../state/session';
 import { toast } from '../state/toast';
 import { mergeLoaded, upsertMessage } from '../state/aiThread';
@@ -87,6 +90,10 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
   const [insert, setInsert] = useState<{ id: number; text: string } | null>(null);
   const [draft, setDraft] = useState('');
   const { scroller, inner, stick, showJump, onScroll: onStickScroll, toBottom } = useStickToBottom(conversationId);
+  const queued = useOutbox((s) => s.entries);
+  const queuedHere = useMemo(() => queued.filter((e) => e.conversationId === conversationId), [queued, conversationId]);
+  // what the chat shows: the stored messages, then stand-ins for the ones still waiting to be sent
+  const shown = useMemo(() => [...state.messages, ...pendingAsMessages(queuedHere, state.messages, me.id)], [state.messages, queuedHere, me.id]);
 
   const full = detail && detail.id === conversationId ? detail : conv;
   const e2ee = useE2eeKey(full ?? undefined, me.id);
@@ -158,10 +165,18 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
       }
     });
     const offResync = realtime.onResync(() => void load());
+    // a message written offline has just been delivered: it takes the place of its stand-in, and an @AMINAI in it starts working
+    const offDelivered = outbox.onDelivered((entry, res) => {
+      if (entry.conversationId !== conversationId) return;
+      dispatch({ type: 'upsert', message: res.message });
+      afterSend(res);
+    });
     return () => {
       off();
       offResync();
+      offDelivered();
     };
+    // (afterSend only uses state setters and stable helpers, so it is not a dependency)
   }, [conversationId, me.id, load]);
 
   // expire typing indicators
@@ -175,7 +190,7 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
   useEffect(() => {
     if (e2ee.state !== 'ready') return;
     let alive = true;
-    const pending = state.messages.filter((m) => m.cipher && !decrypted.has(m.id));
+    const pending = shown.filter((m) => m.cipher && !decrypted.has(m.id));
     if (pending.length === 0) return;
     (async () => {
       const entries = await Promise.all(pending.map(async (m) => [m.id, await decryptText(e2ee.key, m.cipher!)] as const));
@@ -184,7 +199,7 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
     return () => {
       alive = false;
     };
-  }, [e2ee, state.messages, decrypted]);
+  }, [e2ee, shown, decrypted]);
 
   // ---- scrolling (the hook keeps the newest content in view; this adds paging towards older messages)
   const onScroll = () => {
@@ -208,28 +223,61 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
     return map;
   }, [full?.members, full?.peer, me]);
 
+  /** What follows a delivered message (immediately, or later when it came out of the offline queue). */
+  function afterSend(res: { ai?: AiTriggerResult }) {
+    if (res.ai?.denied) setDenied(res.ai.denied);
+    else if (res.ai?.triggered && res.ai.runId) {
+      void Ai.run(res.ai.runId).then((r) => setAssist((cur) => ({ ...cur, [r.run.id]: newerRun(cur[r.run.id], r.run) }))).catch(() => undefined);
+    }
+  }
+
+  const errorTextFor = (code: string) => errText(Object.assign(new Error(code), { code }));
+
   async function send(text: string, fileIds: string[]): Promise<boolean> {
     if (!full) return false;
     setSending(true);
     setDenied(null);
+    // One token per send: if the request is repeated (another address, the offline queue) the server stores the message once.
+    const clientId = newClientId();
+    let body: { body?: string; cipher?: Awaited<ReturnType<typeof encryptText>>; replyToId?: string; fileIds?: string[]; clientId: string };
     try {
-      let body: { body?: string; cipher?: Awaited<ReturnType<typeof encryptText>>; replyToId?: string; fileIds?: string[] };
       if (full.e2ee) {
         if (e2ee.state !== 'ready') throw Object.assign(new Error('no key'), { code: 'E2EE_NO_ACCESS' });
-        body = { cipher: await encryptText(e2ee.key, text) };
-      } else body = { body: text, ...(fileIds.length ? { fileIds } : {}) };
+        body = { cipher: await encryptText(e2ee.key, text), clientId };
+      } else body = { body: text, ...(fileIds.length ? { fileIds } : {}), clientId };
       if (reply) body.replyToId = reply.id;
+    } catch (err) {
+      toast(errText(err), 'error');
+      setSending(false);
+      return false;
+    }
+
+    /** Keeps the message on this device and sends it when the connection is back (text only: files need the network). */
+    const queue = (): boolean => {
+      const result = outbox.enqueue({ clientId, conversationId, body: body.body, cipher: body.cipher, replyToId: body.replyToId });
+      if (typeof result === 'string') {
+        toast(t(`outbox.err.${result}` as Key), 'error');
+        return false;
+      }
+      if (full.e2ee) setDecrypted((cur) => new Map(cur).set(`pending:${clientId}`, text));
+      setReply(null);
+      stick.current = true;
+      toast(t('outbox.queuedToast'), 'info');
+      return true;
+    };
+
+    try {
+      // behind older unsent messages of this chat: keep the order
+      if (fileIds.length === 0 && outbox.hasQueued(conversationId)) return queue();
       const res = await Convs.send(conversationId, body);
       dispatch({ type: 'upsert', message: res.message });
       if (full.e2ee) setDecrypted((cur) => new Map(cur).set(res.message.id, text));
       setReply(null);
       stick.current = true;
-      if (res.ai?.denied) setDenied(res.ai.denied);
-      else if (res.ai?.triggered && res.ai.runId) {
-        void Ai.run(res.ai.runId).then((r) => setAssist((cur) => ({ ...cur, [r.run.id]: newerRun(cur[r.run.id], r.run) }))).catch(() => undefined);
-      }
+      afterSend(res);
       return true;
     } catch (err) {
+      if (isOffline(err) && fileIds.length === 0) return queue();
       toast(errText(err), 'error');
       return false;
     } finally {
@@ -274,7 +322,7 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
   const assistRuns = Object.values(assist).filter((r) => isActiveRun(r));
   const aiAccess = full.ai.effective;
   const blockedE2ee = full.e2ee && e2ee.state === 'error';
-  const lastMsg = state.messages[state.messages.length - 1];
+  const lastMsg = shown[shown.length - 1];
 
   let lastDay = '';
   return (
@@ -321,12 +369,13 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
             <span>{blockedE2ee ? t(`e2ee.err.${(e2ee as { reason: string }).reason}` as Key) : t('e2ee.banner')}</span>
           </div>
         )}
-        {state.messages.map((m) => {
+        {shown.map((m) => {
           const key = dayKey(m.createdAt);
           const sep = key !== lastDay ? fmtDayLabel(m.createdAt, locale, { today: t('common.today'), yesterday: t('common.yesterday') }) : null;
           lastDay = key;
           const sender = members.get(m.senderId);
           const mine = m.senderId === me.id;
+          const waiting = isPendingId(m.id) ? queuedHere.find((e) => e.clientId === clientIdOfPending(m.id)) : undefined;
           return (
             <div key={m.id}>
               {sep && (
@@ -342,6 +391,16 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
                 decrypted={decrypted.get(m.id)}
                 invokerName={m.meta?.ai?.invokedBy ? (members.get(m.meta.ai.invokedBy)?.displayName ?? null) : null}
                 onRunChanged={() => void load()}
+                outbox={
+                  waiting
+                    ? {
+                        state: waiting.state,
+                        errorText: waiting.errorCode ? errorTextFor(waiting.errorCode) : undefined,
+                        onRetry: () => outbox.retry(waiting.clientId),
+                        onDiscard: () => outbox.discard(waiting.clientId),
+                      }
+                    : undefined
+                }
               />
             </div>
           );

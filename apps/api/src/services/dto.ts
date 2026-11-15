@@ -37,6 +37,7 @@ export interface MessageRow {
   via_ai: number;
   status: 'streaming' | 'sent' | 'failed' | 'cancelled';
   meta: string | null;
+  client_id?: string | null;
   edited_at: number | null;
   deleted_at: number | null;
   created_at: number;
@@ -91,10 +92,11 @@ export const fileToDto = (r: FileRow): AttachmentDto => ({
   createdAt: r.created_at,
 });
 
-export function messageToDto(r: MessageRow, attachments: AttachmentDto[] = [], runId: string | null = null): MessageDto {
+export function messageToDto(r: MessageRow, attachments: AttachmentDto[] = [], runId: string | null = null, viewerId: string | null = null): MessageDto {
   const deleted = !!r.deleted_at;
   const meta = deleted ? null : safeJsonParse<MessageMeta>(r.meta);
   return {
+    ...(r.client_id && viewerId === r.sender_id ? { clientId: r.client_id } : {}),
     id: r.id,
     conversationId: r.conversation_id,
     threadId: r.thread_id,

@@ -34,6 +34,8 @@ export interface NewMessage {
   /** Whose uploads may be attached (defaults to the sender; AI messages attach files owned by the human). */
   attachmentOwnerId?: string;
   createdAt?: number;
+  /** The sender's idempotency token: sending the same one twice yields ONE message (see findByClientId / isClientIdConflict). */
+  clientId?: string | null;
 }
 
 export interface InsertOptions {
@@ -84,7 +86,7 @@ export async function pollsFor(env: Env, rows: MessageRow[], viewerId: string): 
 export async function hydrateMessages(env: Env, rows: MessageRow[], viewerId: string): Promise<MessageDto[]> {
   const [atts, polls] = await Promise.all([attachmentsFor(env, rows.map((r) => r.id)), pollsFor(env, rows, viewerId)]);
   return rows.map((r) => {
-    const dto = messageToDto(r, atts.get(r.id) ?? []);
+    const dto = messageToDto(r, atts.get(r.id) ?? [], null, viewerId);
     const poll = polls.get(r.id);
     if (poll) dto.poll = poll;
     return dto;
@@ -109,6 +111,17 @@ export function ftsIndexStatements(env: Env, messageId: string, conversationId: 
   ];
 }
 
+/** The message this sender already stored under this idempotency token in this conversation, if any. */
+export async function findByClientId(env: Env, conversationId: string, senderId: string, clientId: string): Promise<MessageDto | null> {
+  const row = await first<MessageRow>(env.DB.prepare('SELECT * FROM messages WHERE conversation_id = ? AND sender_id = ? AND client_id = ?').bind(conversationId, senderId, clientId));
+  if (!row) return null;
+  const [dto] = await hydrateMessages(env, [row], senderId);
+  return dto ?? null;
+}
+
+/** True when a write failed because the idempotency token was used concurrently (two identical requests raced). */
+export const isClientIdConflict = (err: unknown): boolean => /UNIQUE constraint failed:.*client_id/i.test(String((err as Error)?.message ?? err));
+
 export async function insertMessage(env: Env, m: NewMessage, opts: InsertOptions = {}): Promise<MessageDto> {
   const id = m.id ?? newId(ID_PREFIX.message);
   const now = m.createdAt ?? Date.now();
@@ -128,8 +141,8 @@ export async function insertMessage(env: Env, m: NewMessage, opts: InsertOptions
 
   const stmts: D1PreparedStatement[] = [
     env.DB.prepare(
-      `INSERT INTO messages (id, conversation_id, thread_id, sender_id, kind, body, cipher, reply_to_id, via_ai, status, meta, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO messages (id, conversation_id, thread_id, sender_id, kind, body, cipher, reply_to_id, via_ai, status, meta, created_at, client_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       id,
       m.conversationId,
@@ -143,6 +156,7 @@ export async function insertMessage(env: Env, m: NewMessage, opts: InsertOptions
       status,
       m.meta ? JSON.stringify(m.meta) : null,
       now,
+      m.clientId ?? null,
     ),
   ];
   for (const f of fileIds) {
@@ -158,8 +172,12 @@ export async function insertMessage(env: Env, m: NewMessage, opts: InsertOptions
   const members = await listMemberIds(env, m.conversationId);
   const [dto] = await hydrateMessages(env, [row], m.senderId);
   if (opts.notify !== false) {
-    // Each recipient gets their own view of the message (poll votes are per viewer).
-    await publishToUsers(env, members, { type: 'message.created', message: dto! });
+    // The idempotency token is the sender's own business: only the sender's other devices get it back.
+    const { clientId: _own, ...forOthers } = dto!;
+    await Promise.all([
+      publishToUsers(env, [m.senderId], { type: 'message.created', message: dto! }),
+      publishToUsers(env, members.filter((id) => id !== m.senderId), { type: 'message.created', message: forOthers as MessageDto }),
+    ]);
   }
   return dto!;
 }

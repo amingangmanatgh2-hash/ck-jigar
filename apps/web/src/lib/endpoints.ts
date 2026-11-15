@@ -12,11 +12,14 @@ export interface TurnBody {
   agentId?: string;
   modelId?: string | null;
   shared?: SharedInput;
+  /** Idempotency token: a repeat of the same send returns the first turn instead of asking the model again. */
+  clientId?: string;
 }
 export interface TurnResult {
   userMessage: MessageDto;
   assistantMessage: MessageDto;
   run: RunDto;
+  duplicate?: boolean;
 }
 export interface MessagePage {
   messages: MessageDto[];
@@ -53,7 +56,9 @@ export const Convs = {
   setAi: (id: string, b: { access?: 'off' | 'mention' | 'context'; blocked?: boolean }) => http.put<{ conversation: ConversationDto }>(`/api/conversations/${id}/ai`, b),
   setAiPolicy: (id: string, b: { level: 'off' | 'mention' | 'context' | 'assist'; invokeRoles: 'all' | 'admins' }) => http.put<{ conversation: ConversationDto }>(`/api/conversations/${id}/ai-policy`, b),
   messages: (id: string, q: { before?: string; limit?: number } = {}) => http.get<MessagePage>(`/api/conversations/${id}/messages`, q),
-  send: (id: string, b: { body?: string; cipher?: E2eePayload; replyToId?: string; fileIds?: string[] }) => http.post<{ message: MessageDto; ai: AiTriggerResult }>(`/api/conversations/${id}/messages`, b),
+  /** With a `clientId` the send is idempotent, so it may be repeated (other address, outbox flush) without ever duplicating the message. */
+  send: (id: string, b: { body?: string; cipher?: E2eePayload; replyToId?: string; fileIds?: string[]; clientId?: string }) =>
+    http.post<{ message: MessageDto; ai: AiTriggerResult; duplicate?: boolean }>(`/api/conversations/${id}/messages`, b, undefined, { retry: !!b.clientId }),
   poll: (id: string, b: { question: string; options: string[]; multiple: boolean }) => http.post<{ message: MessageDto }>(`/api/conversations/${id}/polls`, b),
   read: (id: string) => http.post<{ ok: true }>(`/api/conversations/${id}/read`),
 };
@@ -68,7 +73,7 @@ export const Files = {
   upload: async (file: File | Blob, name?: string): Promise<AttachmentDto> => {
     const form = new FormData();
     form.set('file', file, name ?? (file instanceof File ? file.name : 'recording'));
-    return (await request<{ file: AttachmentDto }>('POST', '/api/files', { body: form })).file;
+    return (await request<{ file: AttachmentDto }>('POST', '/api/files', { body: form, timeoutMs: 180_000 })).file;
   },
   remove: (id: string) => http.del<{ ok: true }>(`/api/files/${id}`),
 };
@@ -83,13 +88,13 @@ export const Ai = {
   patchThread: (id: string, b: { title?: string; agentId?: string; modelId?: string | null }) => http.patch<{ thread: ThreadDto }>(`/api/ai/threads/${id}`, b),
   deleteThread: (id: string) => http.del<{ ok: true }>(`/api/ai/threads/${id}`),
   messages: (threadId: string, q: { before?: string; limit?: number } = {}) => http.get<MessagePage>(`/api/ai/threads/${threadId}/messages`, q),
-  send: (threadId: string, b: TurnBody) => http.post<TurnResult>(`/api/ai/threads/${threadId}/messages`, b),
+  send: (threadId: string, b: TurnBody) => http.post<TurnResult>(`/api/ai/threads/${threadId}/messages`, b, undefined, { retry: !!b.clientId }),
   regenerate: (threadId: string, b: { agentId?: string; modelId?: string | null } = {}) => http.post<TurnResult>(`/api/ai/threads/${threadId}/regenerate`, b),
   edit: (threadId: string, messageId: string, b: { body: string; agentId?: string; modelId?: string | null }) => http.put<TurnResult>(`/api/ai/threads/${threadId}/messages/${messageId}`, b),
   createTask: (b: { goal: string; agentId?: string; modelId?: string | null; fileIds?: string[] }) => http.post<TurnResult & { thread: ThreadDto }>('/api/ai/tasks', b),
   search: (q: string, scope: 'ai' | 'all' = 'ai') => http.get<{ hits: SearchHitDto[] }>('/api/ai/search', { q, scope }),
   transcribe: async (audio: Blob, lang: string): Promise<{ text: string; modelId: string }> =>
-    request('POST', '/api/ai/transcribe', { body: audio, headers: { 'Content-Type': audio.type || 'audio/webm' }, query: { lang } }),
+    request('POST', '/api/ai/transcribe', { body: audio, headers: { 'Content-Type': audio.type || 'audio/webm' }, query: { lang }, timeoutMs: 120_000 }),
   runs: (status: 'active' | 'finished' | 'all' = 'all', limit = 20) => http.get<{ runs: RunDto[] }>('/api/ai/runs', { status, limit }),
   run: (id: string) => http.get<{ run: RunDto }>(`/api/ai/runs/${id}`),
   runLog: (id: string) => http.get<{ events: { id: number; stepId: string | null; ts: number; level: string; type: string; data: unknown }[] }>(`/api/ai/runs/${id}/events`),

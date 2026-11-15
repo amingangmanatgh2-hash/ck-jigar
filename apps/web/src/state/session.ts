@@ -2,13 +2,16 @@ import type { SelfDto } from '@aminchat/shared';
 import { ApiError, getToken, setToken, setUnauthorizedHandler } from '../lib/api';
 import { Auth } from '../lib/endpoints';
 import { localeStore, setLocale, type Locale } from '../lib/i18n';
+import { pool } from '../lib/endpointPool';
 import { realtime } from '../lib/realtime';
 import { attachStreamFeed, streams } from '../lib/streams';
 import { createStore, useStore } from '../lib/store';
 import { resetConversations } from './conversations';
+import { outbox } from './outbox';
 
 export interface SessionState {
-  status: 'loading' | 'anonymous' | 'authenticated';
+  /** `offline`: a saved session exists but the server cannot be reached (yet) — we do not pretend the user is signed out. */
+  status: 'loading' | 'anonymous' | 'offline' | 'authenticated';
   user: SelfDto | null;
   /** Set when the session ended because the server rejected the token. */
   expired?: boolean;
@@ -27,7 +30,25 @@ const hasLocalLocaleChoice = (): boolean => {
 
 let detachFeed: (() => void) | null = null;
 function attachFeed(): void {
-  detachFeed ??= attachStreamFeed(realtime);
+  if (detachFeed) return;
+  const offStreams = attachStreamFeed(realtime);
+  // Whenever a connection may just have become usable, unsent messages get another chance right away.
+  const nudge = () => outbox.nudge();
+  const offState = realtime.state.subscribe(() => {
+    const s = realtime.state.get();
+    if (s === 'open' || s === 'polling') nudge();
+  });
+  const offPool = pool.onActiveChange(nudge);
+  const onVisible = () => document.visibilityState === 'visible' && nudge();
+  window.addEventListener('online', nudge);
+  document.addEventListener('visibilitychange', onVisible);
+  detachFeed = () => {
+    offStreams();
+    offState();
+    offPool();
+    window.removeEventListener('online', nudge);
+    document.removeEventListener('visibilitychange', onVisible);
+  };
 }
 
 function enter(user: SelfDto): void {
@@ -35,11 +56,17 @@ function enter(user: SelfDto): void {
   // The profile language wins only when this device has never been told which language to use.
   if (!hasLocalLocaleChoice() && (user.locale === 'fa' || user.locale === 'en')) setLocale(user.locale);
   attachFeed();
+  outbox.bind(user.id);
+  pool.start();
   realtime.start();
 }
 
 function leave(expired = false): void {
   realtime.stop();
+  pool.stop();
+  // An explicit sign-out discards what was not sent (it must not stay on the device); an expired session keeps it for the same user.
+  if (!expired) outbox.clear();
+  outbox.unbind();
   detachFeed?.();
   detachFeed = null;
   streams.clear();
@@ -58,8 +85,10 @@ export async function bootstrapSession(): Promise<void> {
     enter((await Auth.me()).user);
   } catch (err) {
     // A network failure must not log the user out; only a rejected token does (handled by the 401 hook).
-    if (err instanceof ApiError && err.status !== 0 && err.status !== 401) leave();
-    else if (err instanceof ApiError && err.status === 0) sessionStore.set({ status: 'anonymous', user: null });
+    if (err instanceof ApiError && err.status === 0) {
+      pool.start(); // look for another way in while the user sees the "cannot connect" screen
+      sessionStore.set({ status: 'offline', user: null });
+    } else if (err instanceof ApiError && err.status !== 401) leave();
     else leave(true);
   }
 }

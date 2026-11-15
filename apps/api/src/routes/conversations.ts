@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { AMIN_AI_USER_ID, LIMITS } from '@aminchat/shared';
 import { z } from 'zod';
 import { badRequest, forbidden } from '../lib/errors';
+import { clientIdField } from '../lib/fields';
 import { newId, ID_PREFIX } from '../lib/ids';
 import { publishToUsers } from '../lib/realtime';
 import { parseJson, parseQuery } from '../lib/validate';
@@ -20,7 +21,7 @@ import {
   requireMember,
   setMemberRole,
 } from '../services/conversations';
-import { insertMessage, listMessages, makePollMeta, markRead } from '../services/messages';
+import { findByClientId, insertMessage, isClientIdConflict, listMessages, makePollMeta, markRead } from '../services/messages';
 import { triggerAssistIfMentioned } from '../services/assist';
 
 export const conversationRoutes = new Hono<AppEnv>();
@@ -165,6 +166,8 @@ const sendSchema = z.object({
   cipher: cipherSchema.optional(),
   replyToId: z.string().max(64).optional(),
   fileIds: z.array(z.string().max(64)).max(LIMITS.attachmentsPerMessage).default([]),
+  /** Idempotency token chosen by the client (a retry with the same token never creates a second message). */
+  clientId: clientIdField.optional(),
 });
 
 conversationRoutes.post('/:id/messages', userLimit('send'), async (c) => {
@@ -172,6 +175,12 @@ conversationRoutes.post('/:id/messages', userLimit('send'), async (c) => {
   const { conv, member } = await requireMember(c.env, c.req.param('id'), user.id);
   if (conv.type === 'ai') throw badRequest('Use /api/ai/threads/:id/messages to talk to AMIN AI', undefined, 'USE_AI_ENDPOINT');
   const body = await parseJson(c, sendSchema);
+
+  // A retry of something that already arrived: answer with the stored message and do NOT trigger the assistant again.
+  if (body.clientId) {
+    const existing = await findByClientId(c.env, conv.id, user.id, body.clientId);
+    if (existing) return c.json({ message: existing, ai: { triggered: false }, duplicate: true }, 200);
+  }
 
   if (conv.e2ee) {
     if (!body.cipher || body.body !== undefined) throw badRequest('Secret chat messages must be sent as ciphertext', undefined, 'CIPHER_REQUIRED');
@@ -185,14 +194,23 @@ conversationRoutes.post('/:id/messages', userLimit('send'), async (c) => {
     if (!ok) throw badRequest('Reply target not found in this conversation', undefined, 'INVALID_REPLY');
   }
 
-  const message = await insertMessage(c.env, {
-    conversationId: conv.id,
-    senderId: user.id,
-    body: body.body?.trim() ? body.body : null,
-    cipher: body.cipher ?? null,
-    replyToId: body.replyToId ?? null,
-    fileIds: body.fileIds,
-  });
+  let message;
+  try {
+    message = await insertMessage(c.env, {
+      conversationId: conv.id,
+      senderId: user.id,
+      body: body.body?.trim() ? body.body : null,
+      cipher: body.cipher ?? null,
+      replyToId: body.replyToId ?? null,
+      fileIds: body.fileIds,
+      clientId: body.clientId ?? null,
+    });
+  } catch (err) {
+    // two identical requests raced: the loser gets the winner's message
+    const winner = body.clientId && isClientIdConflict(err) ? await findByClientId(c.env, conv.id, user.id, body.clientId) : null;
+    if (!winner) throw err;
+    return c.json({ message: winner, ai: { triggered: false }, duplicate: true }, 200);
+  }
 
   // @AMINAI: only ever triggers when the policy allows it for this conversation and invoker.
   const decision = await computeAccess(c.env, conv, member);

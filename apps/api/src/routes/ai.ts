@@ -9,6 +9,7 @@ import { ensureFreshHealth, modelsResponse, refreshHealth } from '../ai/health';
 import { usageSummary } from '../ai/usage';
 import { all } from '../db/helpers';
 import { badRequest, conflict, tooLarge, unsupportedMedia } from '../lib/errors';
+import { clientIdField } from '../lib/fields';
 import { parseJson, parseQuery } from '../lib/validate';
 import { requireAdmin, requireAuth, type AppEnv } from '../middleware/auth';
 import { userLimit } from '../middleware/rate-limit';
@@ -51,6 +52,7 @@ const sendSchema = z.object({
   agentId: agentField.optional(),
   modelId: modelField.optional(),
   shared: sharedSchema.optional(),
+  clientId: clientIdField.optional(),
 });
 
 /* ------------------------------------------------------------------------------------------------ agents, models, usage */
@@ -138,7 +140,7 @@ aiRoutes.post('/threads/:id/messages', userLimit('ai'), async (c) => {
   const thread = await requireThread(c.env, user.id, c.req.param('id'));
   const body = await parseJson(c, sendSchema);
   const result = await startAiTurn(c.env, user, thread, body);
-  return c.json(result, 201);
+  return c.json(result, result.duplicate ? 200 : 201);
 });
 
 aiRoutes.post('/threads/:id/regenerate', userLimit('ai'), async (c) => {

@@ -1,6 +1,7 @@
 import type { SessionDto } from '@aminchat/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { Avatar } from '../components/Avatar';
+import { EndpointList } from '../components/EndpointList';
 import { Icon } from '../components/Icon';
 import { Button, ConfirmDialog, ErrorBanner, Field, IconButton, ProgressBar, Segmented, Spinner } from '../components/ui';
 import { getServer, isNative, normalizeServerUrl, setServer } from '../lib/api';
@@ -8,6 +9,7 @@ import { hasLocalKeys } from '../lib/e2ee';
 import { Admin, Auth, Users, type AdminOverview, type QuotaDto } from '../lib/endpoints';
 import { fmtBytes, fmtDateTime, fmtNumber } from '../lib/format';
 import { setLocale, useErrorText, useLocale, useT, type Locale } from '../lib/i18n';
+import { useOutbox } from '../state/outbox';
 import { signOut, updateSelf, useUser } from '../state/session';
 import { toast } from '../state/toast';
 import { UsagePanel } from './Models';
@@ -172,6 +174,19 @@ function SecuritySection() {
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+/** How the app reaches the service: the addresses it can use, which one works, how live updates arrive. */
+function ConnectionSection() {
+  const t = useT();
+  return (
+    <section className="panel" aria-label={t('conn.title')}>
+      <h3>
+        <Icon name="globe" size={18} /> {t('conn.title')}
+      </h3>
+      <EndpointList />
     </section>
   );
 }
@@ -463,6 +478,7 @@ export function SettingsScreen() {
   const t = useT();
   const me = useUser();
   const [out, setOut] = useState(false);
+  const unsent = useOutbox((s) => s.entries.length);
   return (
     <section className="page" aria-label={t('nav.settings')}>
       <header className="page-head">
@@ -472,6 +488,7 @@ export function SettingsScreen() {
         <ProfileSection />
         <AppearanceSection />
         <SecuritySection />
+        <ConnectionSection />
         {isNative() && <ServerSection />}
         {me.role === 'admin' && <StorageSection />}
         {me.role === 'admin' && <AdminSection />}
@@ -482,7 +499,7 @@ export function SettingsScreen() {
           <p className="muted small">{t('settings.version', { v: __APP_VERSION__ })}</p>
         </section>
       </div>
-      <ConfirmDialog open={out} title={t('settings.logout')} text={t('settings.logoutConfirm')} confirmLabel={t('settings.logout')} onClose={() => setOut(false)} onConfirm={() => void signOut()} />
+      <ConfirmDialog open={out} title={t('settings.logout')} text={unsent > 0 ? `${t('settings.logoutConfirm')} ${t('outbox.logoutWarn', { n: unsent })}` : t('settings.logoutConfirm')} confirmLabel={t('settings.logout')} onClose={() => setOut(false)} onConfirm={() => void signOut()} />
     </section>
   );
 }

@@ -1,3 +1,4 @@
+import { parseEndpointList } from '@aminchat/shared';
 import type { ErrorHandler, MiddlewareHandler } from 'hono';
 import type { Env } from '../env';
 import { AppError } from '../lib/errors';
@@ -23,6 +24,7 @@ export function isAllowedOrigin(env: Env, origin: string | null | undefined, sel
   if (!origin) return false;
   if (origin === selfOrigin) return true;
   const allowed = allowedOrigins(env.ALLOWED_ORIGINS);
+  for (const endpoint of parseEndpointList(env.PUBLIC_ENDPOINTS)) allowed.add(endpoint); // our own relays are ours
   allowed.add('https://localhost');
   allowed.add('http://localhost');
   allowed.add('capacitor://localhost');

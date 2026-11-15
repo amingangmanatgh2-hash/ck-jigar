@@ -8,6 +8,7 @@ import { AgentPicker, ModelPicker } from '../components/pickers';
 import { ShareDialog } from '../components/ShareDialog';
 import { ThreadDrawer } from '../components/ThreadDrawer';
 import { Button, ConfirmDialog, EmptyState, ErrorBanner, IconButton, Spinner } from '../components/ui';
+import { createSendTokens } from '../lib/api';
 import { Ai, Convs } from '../lib/endpoints';
 import { dayKey, fmtDayLabel } from '../lib/format';
 import { useCodeText, useErrorText, useLocale, useT, type Key } from '../lib/i18n';
@@ -104,6 +105,9 @@ function AiChat({ threadId, resolving }: { threadId: string | null; resolving: b
 
   // refresh the thread list once a run finishes (the server generates the title after the first answer)
   const lastActive = useRef<string | null>(null);
+  const sendTokens = useRef(createSendTokens());
+  /** A thread created for a first message whose send then failed: the next attempt reuses it instead of leaving an empty one behind. */
+  const orphanThread = useRef<string | null>(null);
   useEffect(() => {
     if (state.activeRunId) lastActive.current = state.activeRunId;
     else if (lastActive.current) {
@@ -189,18 +193,25 @@ function AiChat({ threadId, resolving }: { threadId: string | null; resolving: b
     }
     setSending(true);
     try {
-      const body = { body: text || null, fileIds, agentId, modelId: modelId ?? undefined, ...(share ? { shared: share.input } : {}) };
+      const clientId = sendTokens.current.next(JSON.stringify([threadId, text, fileIds, agentId, modelId, share?.input ?? null]));
+      const body = { body: text || null, fileIds, agentId, modelId: modelId ?? undefined, clientId, ...(share ? { shared: share.input } : {}) };
       if (!threadId) {
-        const { thread: created } = await Ai.createThread({ agentId, modelId });
-        upsertThread(created);
-        await Ai.send(created.id, body);
+        let id = orphanThread.current;
+        if (!id) {
+          const { thread: created } = await Ai.createThread({ agentId, modelId });
+          upsertThread(created);
+          id = orphanThread.current = created.id;
+        }
+        await Ai.send(id, body);
+        orphanThread.current = null;
         shareStore.set(null);
-        navigate(`/ai/${created.id}`, { replace: true });
+        navigate(`/ai/${id}`, { replace: true });
       } else {
         const result = await Ai.send(threadId, body);
         shareStore.set(null);
         dispatch({ type: 'turn', result });
       }
+      sendTokens.current.done();
       stick.current = true;
       return true;
     } catch (err) {

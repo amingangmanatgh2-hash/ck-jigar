@@ -138,6 +138,8 @@ export interface MessageDto {
   poll?: PollDto | null;
   /** Run that produced / is producing this message (assistant messages). */
   runId?: string | null;
+  /** The sender's own idempotency token (only returned to the sender). Lets a client match its pending copy with the stored message. */
+  clientId?: string | null;
 }
 
 /* ------------------------------------------------------------------ conversations */
@@ -380,6 +382,27 @@ export interface SearchHitDto {
 }
 
 /* ------------------------------------------------------------------ realtime */
+
+/** `GET /api/realtime/poll`: the long-poll fallback for networks where WebSockets do not work. */
+export interface PollResponse {
+  /** Identifies this server-side buffer; changes whenever it was lost (the client must resync when it changes). */
+  epoch: string;
+  /** Pass back as `seq` in the next call. */
+  seq: number;
+  events: RealtimeEvent[];
+  /** The buffer cannot prove that nothing was missed: refetch what is on screen, then continue from `seq`. */
+  reset: boolean;
+}
+
+/** `GET /api/health` — public. */
+export interface HealthDto {
+  ok: true;
+  service: string;
+  time: number;
+  environment: string;
+  /** Alternative addresses of this service (relays), advertised so that clients can keep working when the main address is blocked. */
+  endpoints: string[];
+}
 
 export type RealtimeEvent =
   | { type: 'hello'; userId: string; ts: number }

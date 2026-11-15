@@ -1,5 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageBubble } from '../src/components/MessageBubble';
 import { setLocale, translate } from '../src/lib/i18n';
 import { streams } from '../src/lib/streams';
@@ -53,5 +54,28 @@ describe('MessageBubble', () => {
   it('writes the AI policy change of a group as a system line', () => {
     render(<MessageBubble message={message({ id: 's', kind: 'system', senderId: 'x', meta: { system: { code: 'ai_policy_changed', by: 'Sara', level: 'mention', invokeRoles: 'admins' } } as never })} mine={false} />);
     expect(screen.getByTestId('system-message')).toHaveTextContent('Sara');
+  });
+
+  it('shows a message that is still waiting to be sent, and what can be done with one that was refused', async () => {
+    const onRetry = vi.fn();
+    const onDiscard = vi.fn();
+    const { rerender } = render(<MessageBubble message={message({ id: 'pending:abc', senderId: 'me', body: 'written offline' })} mine sender={{ id: 'me', displayName: 'Me' } as never} outbox={{ state: 'pending', onRetry, onDiscard }} />);
+    expect(screen.getByTestId('outbox-pending')).toHaveTextContent(translate('en', 'outbox.waiting'));
+    expect(screen.queryByTestId('outbox-failed')).toBeNull();
+
+    rerender(<MessageBubble message={message({ id: 'pending:abc', senderId: 'me', body: 'written offline' })} mine sender={{ id: 'me', displayName: 'Me' } as never} outbox={{ state: 'failed', errorText: 'No access', onRetry, onDiscard }} />);
+    const failed = screen.getByTestId('outbox-failed');
+    expect(failed).toHaveTextContent(translate('en', 'outbox.failed'));
+    expect(failed).toHaveTextContent('No access');
+    await userEvent.click(screen.getByRole('button', { name: translate('en', 'outbox.retry') }));
+    await userEvent.click(screen.getByRole('button', { name: translate('en', 'outbox.discard') }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows nothing extra for a normal, delivered message', () => {
+    render(<MessageBubble message={message({ id: 'm1', senderId: 'me', body: 'delivered' })} mine sender={{ id: 'me', displayName: 'Me' } as never} />);
+    expect(screen.queryByTestId('outbox-pending')).toBeNull();
+    expect(screen.queryByTestId('outbox-failed')).toBeNull();
   });
 });

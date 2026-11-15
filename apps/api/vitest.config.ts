@@ -15,6 +15,7 @@ export default defineConfig({
             GOOGLE_CLIENT_ID: 'test-client',
             GOOGLE_CLIENT_SECRET: 'test-secret',
             GOOGLE_REFRESH_TOKEN: 'test-refresh',
+            RELAY_SECRET: 'test-relay-secret',
           },
           serviceBindings: {
             AI: { name: 'fake-ai', entrypoint: 'FakeAI' },

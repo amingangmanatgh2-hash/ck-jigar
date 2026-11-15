@@ -19,6 +19,7 @@
   "vars": {
     "ENVIRONMENT": "test",
     "ADMIN_USERNAMES": "root_admin",
-    "ALLOWED_ORIGINS": "https://app.example.test,https://localhost"
+    "ALLOWED_ORIGINS": "https://app.example.test,https://localhost",
+    "PUBLIC_ENDPOINTS": "https://relay-a.example.test, relay-b.example.test:8443/ignored/path?x=1, ftp://nope.example.test, https://relay-a.example.test"
   }
 }

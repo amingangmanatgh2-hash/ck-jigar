@@ -1,6 +1,8 @@
 import { Spinner, Toaster } from './components/ui';
 import { useT } from './lib/i18n';
+import { ConnectionBanner } from './components/ConnectionBanner';
 import { AuthScreen } from './screens/Auth';
+import { OfflineScreen } from './screens/Offline';
 import { Shell } from './screens/Shell';
 import { useSession } from './state/session';
 
@@ -15,6 +17,14 @@ export function App() {
       </div>
     );
   }
+  if (session.status === 'offline') {
+    return (
+      <>
+        <OfflineScreen />
+        <Toaster />
+      </>
+    );
+  }
   if (session.status === 'anonymous') {
     return (
       <>
@@ -23,5 +33,10 @@ export function App() {
       </>
     );
   }
-  return <Shell />;
+  return (
+    <>
+      <Shell />
+      <ConnectionBanner />
+    </>
+  );
 }

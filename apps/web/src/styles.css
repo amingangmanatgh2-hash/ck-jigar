@@ -2392,3 +2392,124 @@ button.chat-head-main {
     animation: spin 2.4s linear infinite !important;
   }
 }
+
+/* ---------------------------------------------------------------- connection banner, endpoint list, unsent messages */
+.conn-banner {
+  position: fixed;
+  z-index: 60;
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  inset-inline: 12px;
+  margin-inline: auto;
+  width: fit-content;
+  max-width: min(640px, calc(100vw - 24px));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  box-shadow: 0 4px 18px rgb(0 0 0 / 0.18);
+}
+.conn-banner.warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-color: var(--warn-border);
+}
+.conn-banner.bad {
+  background: var(--bad-bg);
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 30%, transparent);
+}
+.conn-banner > span {
+  flex: 1;
+  min-width: 0;
+}
+.conn-banner-link {
+  flex: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+@media (max-width: 640px) {
+  .conn-banner {
+    border-radius: 14px;
+    font-size: 0.8rem;
+  }
+}
+
+.endpoint-list {
+  display: grid;
+  gap: 12px;
+}
+.endpoint-items {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.endpoint-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.endpoint-item.active {
+  border-color: var(--ok);
+}
+.endpoint-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.endpoint-host {
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+.endpoint-add {
+  display: grid;
+  gap: 8px;
+}
+.dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+.dot-ok {
+  background: var(--ok);
+}
+.dot-down {
+  background: var(--bad);
+}
+.outbox-state {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.outbox-failed {
+  color: var(--bad);
+}
+.link-btn {
+  background: none;
+  border: 0;
+  padding: 0 4px;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
