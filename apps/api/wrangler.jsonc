@@ -1,0 +1,52 @@
+{
+  // AMIN CHAT — production Worker (API + static web app + Durable Objects + cron).
+  // Deploy:  npm run build && npm run db:migrate:remote && npm run deploy   (see docs/DEPLOY.md)
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "amin-chat",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // The web app (apps/web) is served by the same Worker. Only /api/* runs Worker code; every other path is a static
+  // asset, and unknown paths fall back to index.html (client-side routing).
+  "assets": {
+    "directory": "../web/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Workers AI — the one and only source of model output. Model ids live in src/ai/models.ts.
+  "ai": { "binding": "AI" },
+
+  // D1 / R2 are created automatically on the first `wrangler deploy` when no id is given (Wrangler >= 4.45).
+  // Optionally add "database_id" after the first deploy to pin the database.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "amin-chat-db", "migrations_dir": "migrations" }
+  ],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "amin-chat-files" }],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "USER_HUB", "class_name": "UserHub" },
+      { "name": "RUN_COORDINATOR", "class_name": "RunCoordinator" },
+      { "name": "RATE_LIMITER", "class_name": "RateLimiter" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserHub", "RunCoordinator", "RateLimiter"] }],
+
+  // Every minute: deliver due reminders, recover stalled AI tasks, expire old approvals (see src/cron.ts).
+  "triggers": { "crons": ["* * * * *"] },
+
+  "observability": { "enabled": true },
+
+  "vars": {
+    "ENVIRONMENT": "production",
+    // Extra browser origins (comma separated). The web app itself is same-origin; the Android app's origins are built in.
+    "ALLOWED_ORIGINS": "",
+    // Usernames that become administrators when they register (comma separated). Set this to your own username
+    // (not a reserved one such as "admin" or "root").
+    "ADMIN_USERNAMES": ""
+    // Optional: "AI_GATEWAY_ID": "<your AI Gateway id>", "DEFAULT_DAILY_TOKENS": "300000", "DEFAULT_DAILY_REQUESTS": "400"
+    // Optional secrets (wrangler secret put): SEARCH_PROVIDER = brave | tavily, SEARCH_API_KEY
+  }
+}

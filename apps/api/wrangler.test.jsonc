@@ -1,0 +1,24 @@
+{
+  // Test-only configuration used by Vitest (@cloudflare/vitest-plugin).
+  // It mirrors wrangler.jsonc but has no real AI binding (a fake Workers AI service is injected by vitest.config.ts),
+  // no static assets and no cron triggers.
+  "name": "amin-chat-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [{ "binding": "DB", "database_name": "amin-chat-db-test", "database_id": "00000000-0000-0000-0000-000000000000" }],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "amin-chat-files-test" }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "USER_HUB", "class_name": "UserHub" },
+      { "name": "RUN_COORDINATOR", "class_name": "RunCoordinator" },
+      { "name": "RATE_LIMITER", "class_name": "RateLimiter" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserHub", "RunCoordinator", "RateLimiter"] }],
+  "vars": {
+    "ENVIRONMENT": "test",
+    "ADMIN_USERNAMES": "root_admin",
+    "ALLOWED_ORIGINS": "https://app.example.test,https://localhost"
+  }
+}
