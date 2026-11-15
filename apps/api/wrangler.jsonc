@@ -1,6 +1,6 @@
 {
   // AMIN CHAT — production Worker (API + static web app + Durable Objects + cron).
-  // Deploy:  npm run build && npm run db:migrate:remote && npm run deploy   (see docs/DEPLOY.md)
+  // Deploy:  npm run deploy   (builds the web app, then deploys and migrates in the right order — see docs/deploy.md)
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "amin-chat",
   "main": "src/index.ts",
@@ -47,6 +47,8 @@
     // (not a reserved one such as "admin" or "root").
     "ADMIN_USERNAMES": ""
     // Optional: "AI_GATEWAY_ID": "<your AI Gateway id>", "DEFAULT_DAILY_TOKENS": "300000", "DEFAULT_DAILY_REQUESTS": "400"
+    // Optional (cold file tier, see docs/storage-drive.md): "FILES_OFFLOAD_AFTER_DAYS": "7", "FILES_OFFLOAD_LARGE_BYTES": "5242880", "R2_SOFT_LIMIT_BYTES": "8589934592"
     // Optional secrets (wrangler secret put): SEARCH_PROVIDER = brave | tavily, SEARCH_API_KEY
+    //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN  (Google Drive as cold storage: npm run drive:token)
   }
 }

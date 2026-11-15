@@ -2,16 +2,16 @@ import type { SessionDto } from '@aminchat/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
-import { Button, ConfirmDialog, ErrorBanner, Field, IconButton, Segmented, Spinner } from '../components/ui';
+import { Button, ConfirmDialog, ErrorBanner, Field, IconButton, ProgressBar, Segmented, Spinner } from '../components/ui';
 import { getServer, isNative, normalizeServerUrl, setServer } from '../lib/api';
 import { hasLocalKeys } from '../lib/e2ee';
 import { Admin, Auth, Users, type AdminOverview, type QuotaDto } from '../lib/endpoints';
-import { fmtDateTime, fmtNumber } from '../lib/format';
+import { fmtBytes, fmtDateTime, fmtNumber } from '../lib/format';
 import { setLocale, useErrorText, useLocale, useT, type Locale } from '../lib/i18n';
 import { signOut, updateSelf, useUser } from '../state/session';
 import { toast } from '../state/toast';
 import { UsagePanel } from './Models';
-import type { UsageSummaryDto, UserDto } from '@aminchat/shared';
+import type { StorageStatusDto, UsageSummaryDto, UserDto } from '@aminchat/shared';
 import { applyTheme, getTheme, type Theme } from '../lib/theme';
 
 function ProfileSection() {
@@ -352,6 +352,113 @@ function AdminSection() {
   );
 }
 
+/** Administrators only: where files live (R2 hot tier, Google Drive cold tier) and whether the Drive connection works. */
+export function StorageSection() {
+  const t = useT();
+  const locale = useLocale();
+  const errText = useErrorText();
+  const [status, setStatus] = useState<StorageStatusDto | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState<'check' | 'offload' | null>(null);
+
+  useEffect(() => {
+    Admin.storage().then(setStatus).catch(setError);
+  }, []);
+
+  async function check() {
+    setBusy('check');
+    try {
+      const s = await Admin.checkStorage();
+      setStatus(s);
+      toast(t(s.cold.health === 'ok' ? 'storage.checkOk' : 'storage.checkFailed'), s.cold.health === 'ok' ? 'success' : 'error');
+    } catch (err) {
+      toast(errText(err), 'error');
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function offload() {
+    setBusy('offload');
+    try {
+      const { report, status: s } = await Admin.offloadNow();
+      setStatus(s);
+      if (report.moved > 0) toast(t('storage.moved', { n: report.moved }), 'success');
+      else if (report.failed > 0) toast(t('storage.someFailed', { n: report.failed }), 'error');
+      else if (report.skipped === 'nothing_to_do') toast(t('storage.nothing'), 'info');
+      else if (report.skipped) toast(t(`storage.skipped.${report.skipped}`), 'error');
+    } catch (err) {
+      toast(errText(err), 'error');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const tone = (h: StorageStatusDto['cold']['health']) => (h === 'ok' ? 'chip-ok' : h === 'not_configured' ? 'chip-neutral' : h === 'degraded' ? 'chip-warn' : 'chip-bad');
+  return (
+    <section className="panel" aria-label={t('storage.title')} data-testid="storage-section">
+      <h3>
+        <Icon name="file" size={18} /> {t('storage.title')}
+      </h3>
+      <p className="muted small">{t('storage.intro')}</p>
+      {error != null && <ErrorBanner text={errText(error)} />}
+      {!status && !error && <Spinner />}
+      {status && (
+        <div className="stack">
+          {status.attention && (
+            <p className={`banner ${status.attention === 'drive_degraded' || status.attention === 'r2_filling_without_drive' ? 'banner-warn' : 'banner-error'}`} role="alert" data-testid="storage-attention" data-attention={status.attention}>
+              {t(`storage.attention.${status.attention}`)}
+            </p>
+          )}
+          <div className="meter">
+            <div className="row between">
+              <strong>{t('storage.hot')}</strong>
+              <span className="muted">{t('storage.files', { n: fmtNumber(status.hot.files, locale) })}</span>
+            </div>
+            <ProgressBar value={status.hot.bytes} max={status.hot.softLimitBytes} label={t('storage.hot')} />
+            <span className="muted small">{t('storage.hotUsed', { used: fmtBytes(status.hot.bytes, locale), limit: fmtBytes(status.hot.softLimitBytes, locale) })}</span>
+          </div>
+          <div className="meter">
+            <div className="row between">
+              <strong>{t('storage.cold')}</strong>
+              <span className={`chip ${tone(status.cold.health)}`} data-testid="drive-health" data-health={status.cold.health}>
+                {t(`storage.health.${status.cold.health}`)}
+              </span>
+            </div>
+            {status.cold.configured && (
+              <span className="muted small">
+                {t('storage.files', { n: fmtNumber(status.cold.files, locale) })} · {t('storage.coldUsed', { used: fmtBytes(status.cold.bytes, locale) })}
+              </span>
+            )}
+            {status.cold.account && (
+              <span className="muted small">
+                {status.cold.account.limit === null
+                  ? t('storage.accountNoLimit', { used: fmtBytes(status.cold.account.used, locale) })
+                  : t('storage.account', { used: fmtBytes(status.cold.account.used, locale), limit: fmtBytes(status.cold.account.limit, locale) })}
+              </span>
+            )}
+            {status.cold.error && status.cold.health !== 'ok' && (
+              <details className="small">
+                <summary>{t('storage.detail')}</summary>
+                <code dir="ltr">{status.cold.error}</code>
+              </details>
+            )}
+          </div>
+          <p className="muted small">{t('storage.policy', { days: fmtNumber(status.policy.afterDays, locale), size: fmtBytes(status.policy.largeBytes, locale), minutes: fmtNumber(status.policy.minAgeMinutes, locale) })}</p>
+          <p className="muted small">{status.lastRunAt ? t('storage.lastRun', { time: fmtDateTime(status.lastRunAt, locale) }) : t('storage.neverRun')}</p>
+          <div className="row gap">
+            <Button icon="refresh" busy={busy === 'check'} disabled={!status.cold.configured || busy !== null} onClick={() => void check()}>
+              {t('storage.check')}
+            </Button>
+            <Button variant="primary" busy={busy === 'offload'} disabled={!status.cold.configured || busy !== null} onClick={() => void offload()}>
+              {t('storage.offload')}
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function SettingsScreen() {
   const t = useT();
   const me = useUser();
@@ -366,6 +473,7 @@ export function SettingsScreen() {
         <AppearanceSection />
         <SecuritySection />
         {isNative() && <ServerSection />}
+        {me.role === 'admin' && <StorageSection />}
         {me.role === 'admin' && <AdminSection />}
         <section className="panel">
           <Button variant="danger" icon="logout" onClick={() => setOut(true)}>

@@ -1,28 +1,4 @@
-import type {
-  AgentDto,
-  ApprovalDto,
-  AttachmentDto,
-  AuthResponse,
-  ConversationDto,
-  E2eePayload,
-  MemoryItemDto,
-  MemorySettingsDto,
-  MemorySuggestionDto,
-  MessageDto,
-  ModelsResponse,
-  ProjectDto,
-  ReminderDto,
-  RunDto,
-  SearchHitDto,
-  SelfDto,
-  SessionDto,
-  ThreadDto,
-  TodoDto,
-  UsageSummaryDto,
-  UserDto,
-  AiTriggerResult,
-  PollDto,
-} from '@aminchat/shared';
+import type { AgentDto, AiTriggerResult, ApprovalDto, AttachmentDto, AuthResponse, ConversationDto, E2eePayload, MemoryItemDto, MemorySettingsDto, MemorySuggestionDto, MessageDto, ModelsResponse, OffloadReportDto, PollDto, ProjectDto, ReminderDto, RunDto, SearchHitDto, SelfDto, SessionDto, StorageStatusDto, ThreadDto, TodoDto, UsageSummaryDto, UserDto } from '@aminchat/shared';
 import { http, request } from './api';
 
 export interface SharedInput {
@@ -154,6 +130,12 @@ export interface QuotaDto {
 }
 
 export const Admin = {
+  /** Where files are stored (R2 / Google Drive) and whether the Drive connection works. */
+  storage: () => http.get<StorageStatusDto>('/api/admin/storage'),
+  /** Really calls Google (folder + quota) and returns the refreshed state. */
+  checkStorage: () => http.post<StorageStatusDto>('/api/admin/storage/check', {}),
+  /** Runs the R2 → Drive job now. */
+  offloadNow: () => http.post<{ report: OffloadReportDto; status: StorageStatusDto }>('/api/admin/storage/offload', {}),
   overview: (days = 7) => http.get<AdminOverview>('/api/admin/overview', { days }),
   userUsage: (id: string) => http.get<UsageSummaryDto>(`/api/admin/users/${id}/usage`),
   setQuota: (id: string, b: { dailyTokens: number | null; dailyRequests: number | null; monthlyTokens: number | null }) => http.put<{ quota: QuotaDto }>(`/api/admin/users/${id}/quota`, b),

@@ -399,3 +399,37 @@ export type RealtimeEvent =
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown; requestId?: string };
 }
+
+/* ------------------------------------------------------------------------------------------------ file storage (admin) */
+
+/** Health of the connection to Google Drive, the cold file tier. */
+export type DriveHealth = 'not_configured' | 'ok' | 'degraded' | 'auth_failed' | 'quota_full';
+/** The one thing an administrator should look at first. */
+export type StorageAttention = 'drive_auth_failed' | 'drive_full' | 'drive_degraded' | 'r2_filling_without_drive' | null;
+
+export interface StorageStatusDto {
+  hot: { files: number; bytes: number; softLimitBytes: number; overLimit: boolean };
+  cold: {
+    configured: boolean;
+    health: DriveHealth;
+    /** Technical detail from Google (English). Show as a detail only, never as the explanation. */
+    error: string | null;
+    errorAt: number | null;
+    okAt: number | null;
+    folderId: string | null;
+    files: number;
+    bytes: number;
+    account: { used: number; limit: number | null } | null;
+  };
+  policy: { afterDays: number; largeBytes: number; minAgeMinutes: number };
+  lastRunAt: number | null;
+  attention: StorageAttention;
+}
+
+export interface OffloadReportDto {
+  skipped: 'not_configured' | 'auth_failed' | 'quota_full' | 'throttled' | 'nothing_to_do' | null;
+  moved: number;
+  bytes: number;
+  failed: number;
+  purged: number;
+}

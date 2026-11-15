@@ -6,6 +6,7 @@ import { ID_PREFIX, newId } from '../lib/ids';
 import { publishToUsers } from '../lib/realtime';
 import { buildFtsQuery, normalizeForSearch, truncate } from '../lib/text';
 import { ensureAiConversation } from './conversations';
+import { purgeBlobs, type StoredFile } from '../storage/file-store';
 
 export interface ThreadRow {
   id: string;
@@ -97,17 +98,18 @@ export async function ensureRemindersThread(env: Env, userId: string): Promise<T
  */
 export async function deleteThread(env: Env, userId: string, threadId: string): Promise<void> {
   const thread = await requireThread(env, userId, threadId);
-  const files = await all<{ id: string; r2_key: string }>(
-    env.DB.prepare('SELECT f.id, f.r2_key FROM files f JOIN messages m ON m.id = f.message_id WHERE m.thread_id = ? AND f.owner_id = ?').bind(thread.id, userId),
+  const files = await all<StoredFile>(
+    env.DB.prepare('SELECT f.id, f.r2_key, f.tier, f.drive_id FROM files f JOIN messages m ON m.id = f.message_id WHERE m.thread_id = ? AND f.owner_id = ? AND f.deleted_at IS NULL').bind(thread.id, userId),
   );
   await batch(env.DB, [
     env.DB.prepare('DELETE FROM message_fts WHERE rowid IN (SELECT seq FROM messages WHERE thread_id = ?)').bind(thread.id),
-    env.DB.prepare('DELETE FROM files WHERE message_id IN (SELECT id FROM messages WHERE thread_id = ?) AND owner_id = ?').bind(thread.id, userId),
+    // soft-delete: the row keeps its R2 key / Drive id until the blob is really gone (purgeBlobs below, or the periodic sweep)
+    env.DB.prepare('UPDATE files SET deleted_at = ? WHERE message_id IN (SELECT id FROM messages WHERE thread_id = ?) AND owner_id = ? AND deleted_at IS NULL').bind(Date.now(), thread.id, userId),
     env.DB.prepare('DELETE FROM runs WHERE thread_id = ?').bind(thread.id),
     env.DB.prepare('DELETE FROM messages WHERE thread_id = ?').bind(thread.id),
     env.DB.prepare('DELETE FROM ai_threads WHERE id = ?').bind(thread.id),
   ]);
-  await Promise.all(files.map((f) => env.FILES.delete(f.r2_key).catch(() => undefined)));
+  await purgeBlobs(env, files);
   await publishToUsers(env, [userId], { type: 'conversation.updated', conversationId: thread.conversation_id });
 }
 

@@ -1,4 +1,4 @@
-import type { ApprovalDto, MessageDto, RunDto, RunStepDto } from '@aminchat/shared';
+import type { ApprovalDto, MessageDto, RunDto, RunStepDto, StorageStatusDto } from '@aminchat/shared';
 
 export const message = (o: Partial<MessageDto> = {}): MessageDto => ({
   id: 'm1',
@@ -70,4 +70,13 @@ export const approval = (o: Partial<ApprovalDto> = {}): ApprovalDto => ({
   createdAt: 1,
   expiresAt: Date.now() + 3_600_000,
   ...o,
+});
+
+export const storageStatus = (o: Omit<Partial<StorageStatusDto>, 'cold'> & { cold?: Partial<StorageStatusDto['cold']> } = {}): StorageStatusDto => ({
+  hot: { files: 12, bytes: 3 * 1024 ** 2, softLimitBytes: 8 * 1024 ** 3, overLimit: false },
+  policy: { afterDays: 7, largeBytes: 5 * 1024 ** 2, minAgeMinutes: 60 },
+  lastRunAt: null,
+  attention: null,
+  ...o,
+  cold: { configured: true, health: 'ok', error: null, errorAt: null, okAt: null, folderId: 'fld1', files: 4, bytes: 20 * 1024 ** 2, account: null, ...o.cold },
 });

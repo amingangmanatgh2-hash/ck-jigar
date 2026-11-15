@@ -23,6 +23,7 @@ import { cancelRun, startRun } from './run-control';
 import { createRun, runToDto, type RunRow } from './runs';
 import { displayNames, conversationLabel } from './transcript';
 import { touchThread, type ThreadRow } from './threads';
+import { purgeBlobs, type StoredFile } from '../storage/file-store';
 
 export interface SharedInput {
   conversationId: string;
@@ -299,18 +300,19 @@ export async function editAndResend(env: Env, user: AuthUser, thread: ThreadRow,
   });
 
   const later = await all<{ id: string }>(env.DB.prepare('SELECT id FROM messages WHERE thread_id = ? AND seq > ?').bind(thread.id, row.seq));
-  const files = await all<{ r2_key: string }>(
-    env.DB.prepare('SELECT f.r2_key FROM files f JOIN messages m ON m.id = f.message_id WHERE m.thread_id = ? AND m.seq > ? AND f.owner_id = ?').bind(thread.id, row.seq, user.id),
+  const files = await all<StoredFile>(
+    env.DB.prepare('SELECT f.id, f.r2_key, f.tier, f.drive_id FROM files f JOIN messages m ON m.id = f.message_id WHERE m.thread_id = ? AND m.seq > ? AND f.owner_id = ? AND f.deleted_at IS NULL').bind(thread.id, row.seq, user.id),
   );
   await batch(env.DB, [
     env.DB.prepare('DELETE FROM message_fts WHERE rowid IN (SELECT seq FROM messages WHERE thread_id = ? AND seq > ?)').bind(thread.id, row.seq),
-    env.DB.prepare('DELETE FROM files WHERE message_id IN (SELECT id FROM messages WHERE thread_id = ? AND seq > ?) AND owner_id = ?').bind(thread.id, row.seq, user.id),
+    // soft-delete: the row keeps its R2 key / Drive id until the blob is really gone (purgeBlobs below, or the periodic sweep)
+    env.DB.prepare('UPDATE files SET deleted_at = ? WHERE message_id IN (SELECT id FROM messages WHERE thread_id = ? AND seq > ?) AND owner_id = ? AND deleted_at IS NULL').bind(Date.now(), thread.id, row.seq, user.id),
     env.DB.prepare('DELETE FROM runs WHERE thread_id = ? AND (trigger_message_id IN (SELECT id FROM messages WHERE thread_id = ? AND seq >= ?) OR result_message_id IN (SELECT id FROM messages WHERE thread_id = ? AND seq > ?))').bind(thread.id, thread.id, row.seq, thread.id, row.seq),
     env.DB.prepare('DELETE FROM messages WHERE thread_id = ? AND seq > ?').bind(thread.id, row.seq),
     env.DB.prepare('UPDATE messages SET body = ?, edited_at = ? WHERE id = ?').bind(body, Date.now(), row.id),
     ...ftsIndexStatements(env, row.id, row.conversation_id, row.thread_id, body),
   ]);
-  await Promise.all(files.map((f) => env.FILES.delete(f.r2_key).catch(() => undefined)));
+  await purgeBlobs(env, files);
   for (const m of later) await publishToUsers(env, [user.id], { type: 'message.deleted', conversationId: thread.conversation_id, messageId: m.id });
 
   const edited = (await getMessageRow(env, row.id))!;

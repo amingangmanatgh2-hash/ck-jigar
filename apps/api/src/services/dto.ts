@@ -57,6 +57,11 @@ export interface FileRow {
   source: 'upload' | 'ai';
   created_at: number;
   deleted_at: number | null;
+  /** Where the bytes are: 'r2' (hot), 'drive' (cold), or 'moving' while the offload job copies them. */
+  tier: 'r2' | 'moving' | 'drive';
+  drive_id: string | null;
+  tier_changed_at: number | null;
+  purged_at: number | null;
 }
 
 export const userToDto = (r: UserRow): UserDto => ({

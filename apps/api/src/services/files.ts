@@ -3,6 +3,7 @@ import type { Env } from '../env';
 import { sha256Hex } from '../lib/crypto';
 import { ID_PREFIX, newId } from '../lib/ids';
 import { badRequest, tooLarge, unsupportedMedia } from '../lib/errors';
+import { fileStore } from '../storage/file-store';
 import { fileToDto, type FileRow } from './dto';
 
 interface TypeRule {
@@ -151,7 +152,8 @@ export async function storeFile(
   const key = `u/${ownerId}/${id}`;
   const now = Date.now();
   const sha = await sha256Hex(bytes);
-  await env.FILES.put(key, bytes, { httpMetadata: { contentType: v.mime }, customMetadata: { owner: ownerId } });
+  const store = fileStore(env);
+  await store.put(key, bytes, { mime: v.mime, owner: ownerId }); // every upload lands in the hot tier
   try {
     await env.DB.prepare(
       `INSERT INTO files (id, owner_id, r2_key, name, mime, size, sha256, kind, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -177,6 +179,10 @@ export async function storeFile(
     source: opts.source ?? 'upload',
     created_at: now,
     deleted_at: null,
+    tier: 'r2',
+    drive_id: null,
+    tier_changed_at: null,
+    purged_at: null,
   };
 }
 

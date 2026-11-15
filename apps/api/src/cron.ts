@@ -7,6 +7,8 @@ import { clipForLog } from './lib/text';
 import { insertMessage } from './services/messages';
 import { resumeRun } from './services/run-control';
 import { ensureRemindersThread } from './services/threads';
+import { dropTombstones, offloadFiles } from './storage/offload';
+import { alertAdminsIfNeeded } from './storage/notify';
 
 export interface CronReport {
   reminders: number;
@@ -14,6 +16,8 @@ export interface CronReport {
   stalled: number;
   expiredApprovals: number;
   lostResumes: number;
+  /** Files moved from R2 to Google Drive in this run. */
+  offloaded: number;
 }
 
 interface ReminderRow {
@@ -154,10 +158,11 @@ export async function housekeeping(env: Env, now = Date.now()): Promise<void> {
     env.DB.prepare('DELETE FROM ai_usage WHERE created_at < ?').bind(now - 120 * day),
     env.DB.prepare("DELETE FROM memory_suggestions WHERE status != 'pending' AND decided_at < ?").bind(now - 30 * day),
   ]);
+  await dropTombstones(env, now);
 }
 
 export async function runScheduled(env: Env, now = Date.now()): Promise<CronReport> {
-  const report: CronReport = { reminders: 0, resumed: 0, stalled: 0, expiredApprovals: 0, lostResumes: 0 };
+  const report: CronReport = { reminders: 0, resumed: 0, stalled: 0, expiredApprovals: 0, lostResumes: 0, offloaded: 0 };
   const guard = async (name: string, fn: () => Promise<void>) => {
     try {
       await fn();
@@ -173,6 +178,9 @@ export async function runScheduled(env: Env, now = Date.now()): Promise<CronRepo
   });
   await guard('approvals', async () => void (report.expiredApprovals = await expireApprovals(env, now)));
   await guard('lost decisions', async () => void (report.lostResumes = await resumeLostDecisions(env, now)));
+  // cold file tier: move old/large files to Google Drive, finish pending deletes, warn the admins when Drive stops working
+  await guard('file offload', async () => void (report.offloaded = (await offloadFiles(env, { now })).moved));
+  await guard('storage alerts', async () => void (await alertAdminsIfNeeded(env)));
   if (new Date(now).getUTCMinutes() === 0) await guard('housekeeping', () => housekeeping(env, now));
   return report;
 }

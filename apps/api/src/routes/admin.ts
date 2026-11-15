@@ -8,6 +8,7 @@ import { parseJson, parseQuery } from '../lib/validate';
 import { requireAdmin, requireAuth, type AppEnv } from '../middleware/auth';
 import { userLimit } from '../middleware/rate-limit';
 import { requireAiBackend } from '../services/ai-chat';
+import { offloadFiles, storageStatus } from '../storage/offload';
 
 export const adminRoutes = new Hono<AppEnv>();
 adminRoutes.use('*', requireAuth, requireAdmin, userLimit('api'));
@@ -80,4 +81,28 @@ adminRoutes.post('/models/refresh', userLimit('aiHeavy'), async (c) => {
   requireAiBackend(c.env);
   await refreshHealth(c.env);
   return c.json(await modelsResponse(c.env));
+});
+
+/* ------------------------------------------------------------------------------------------------ file storage */
+
+const auditStorage = (c: { env: AppEnv['Bindings'] }, userId: string, action: string, meta: unknown) =>
+  c.env.DB.prepare('INSERT INTO audit_log (user_id, action, target_type, target_id, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(userId, action, 'storage', 'files', JSON.stringify(meta), Date.now())
+    .run();
+
+/** Where the files are: the hot tier (R2), the cold tier (Google Drive) and whether the connection to Drive works. */
+adminRoutes.get('/storage', async (c) => c.json(await storageStatus(c.env)));
+
+/** "Test connection": really calls Google (folder + quota) and updates the health state. */
+adminRoutes.post('/storage/check', userLimit('aiHeavy'), async (c) => {
+  const status = await storageStatus(c.env, { check: true });
+  await auditStorage(c, c.get('user').id, 'storage.check', { health: status.cold.health });
+  return c.json(status);
+});
+
+/** Runs the offload job now instead of waiting for the next cron tick. */
+adminRoutes.post('/storage/offload', userLimit('aiHeavy'), async (c) => {
+  const report = await offloadFiles(c.env, { force: true });
+  await auditStorage(c, c.get('user').id, 'storage.offload', report);
+  return c.json({ report, status: await storageStatus(c.env) });
 });

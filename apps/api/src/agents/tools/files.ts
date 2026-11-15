@@ -9,6 +9,7 @@ import type { FileRow } from '../../services/dto';
 import { loadHealth } from '../../ai/health';
 import { rolePriority } from '../../ai/models';
 import { ToolError, clip, type ToolDef } from './types';
+import { fileStore } from '../../storage/file-store';
 
 const fileList = z.object({
   kind: z.enum(['image', 'audio', 'video', 'document', 'text', 'archive', 'other']).optional(),
@@ -126,7 +127,7 @@ export const imageGenerateTool: ToolDef<z.infer<typeof imageGenerate>> = {
     const img = await ctx.ai.generateImage(ctx.user.id, a.prompt, { runId: ctx.run.id, signal: ctx.signal });
     const ext = img.mime === 'image/png' ? 'png' : img.mime === 'image/webp' ? 'webp' : 'jpg';
     const file = await storeFile(ctx.env, ctx.user.id, `amin-ai-${Date.now().toString(36)}.${ext}`, img.bytes, { source: 'ai', forceMime: img.mime, kind: 'image' });
-    const stored = await ctx.env.FILES.head(file.r2_key);
+    const stored = await fileStore(ctx.env).exists(file);
     if (!stored) throw new ToolError('NOT_SAVED', 'The generated image could not be stored.', { retryable: true });
     return { text: 'Image generated and attached to the reply.', data: { fileId: file.id, model: img.modelId }, generatedFileIds: [file.id], verified: true };
   },

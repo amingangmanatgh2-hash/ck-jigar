@@ -9,6 +9,7 @@ import { userLimit } from '../middleware/rate-limit';
 import { getMember } from '../services/conversations';
 import { fileToDto, type FileRow } from '../services/dto';
 import { storeFile, TYPE_RULES, extensionOf } from '../services/files';
+import { fileStore, purgeBlobs } from '../storage/file-store';
 
 export const fileRoutes = new Hono<AppEnv>();
 fileRoutes.use('*', requireAuth, userLimit('api'));
@@ -81,7 +82,8 @@ async function authorize(c: { env: AppEnv['Bindings'] }, userId: string, fileId:
 
 fileRoutes.get('/:id', async (c) => {
   const row = await authorize(c, c.get('user').id, c.req.param('id'));
-  const obj = await c.env.FILES.get(row.r2_key);
+  // hot files come from R2, cold ones are fetched from Google Drive through this Worker — after the access check above
+  const obj = await fileStore(c.env).open(row);
   if (!obj) throw notFound('File content is missing', 'FILE_CONTENT_MISSING');
   const rule = TYPE_RULES[extensionOf(row.name)];
   const inline = !!rule?.inline && c.req.query('download') !== '1';
@@ -89,7 +91,7 @@ fileRoutes.get('/:id', async (c) => {
   return new Response(obj.body, {
     headers: {
       'Content-Type': row.mime,
-      'Content-Length': String(obj.size),
+      ...(obj.size >= 0 ? { 'Content-Length': String(obj.size) } : {}),
       'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${filename}`,
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy': "default-src 'none'; sandbox",
@@ -103,6 +105,6 @@ fileRoutes.delete('/:id', async (c) => {
   const row = await authorize(c, user.id, c.req.param('id'));
   if (row.owner_id !== user.id) throw forbidden('Only the owner can delete a file', 'NOT_YOUR_FILE');
   await c.env.DB.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').bind(Date.now(), row.id).run();
-  await c.env.FILES.delete(row.r2_key);
+  await purgeBlobs(c.env, [row]); // whatever cannot be deleted right now is retried by the periodic sweep
   return c.json({ ok: true });
 });

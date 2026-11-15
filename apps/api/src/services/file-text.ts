@@ -4,6 +4,7 @@ import type { Env } from '../env';
 import { AppError } from '../lib/errors';
 import { AiClient, bytesToBase64 } from '../ai/client';
 import { computeAccess, getConversation, getMember } from './conversations';
+import { fileStore } from '../storage/file-store';
 import type { FileRow } from './dto';
 
 export type FileContent =
@@ -39,6 +40,16 @@ async function saveDerivative(env: Env, fileId: string, kind: 'text' | 'transcri
     .run();
 }
 
+/** The bytes of a file, from whichever tier holds them. A cold file that cannot be fetched right now is reported as unreadable, not as an error. */
+async function readBytes(env: Env, file: FileRow): Promise<Uint8Array | { unreadable: string }> {
+  try {
+    return (await fileStore(env).bytes(file)) ?? { unreadable: 'The file content is missing from storage.' };
+  } catch (err) {
+    if (err instanceof AppError && err.code === 'FILE_STORAGE_UNAVAILABLE') return { unreadable: 'The file is kept in Google Drive, which cannot be reached right now. Try again later.' };
+    throw err;
+  }
+}
+
 /** Turns a stored file into something a model can consume. Never throws for "cannot read" situations — returns `unsupported` with the reason. */
 export async function readFileForAi(
   env: Env,
@@ -57,18 +68,18 @@ export async function readFileForAi(
   if (file.size > LIMITS.aiFileMaxBytes) return { type: 'unsupported', reason: `The file is larger than ${Math.round(LIMITS.aiFileMaxBytes / 1048576)} MB, the limit for AI processing.` };
 
   if (file.kind === 'text') {
-    const obj = await env.FILES.get(file.r2_key);
-    if (!obj) return { type: 'unsupported', reason: 'The file content is missing from storage.' };
-    return clip(new TextDecoder('utf-8').decode(await obj.arrayBuffer()), 'raw');
+    const bytes = await readBytes(env, file);
+    if ('unreadable' in bytes) return { type: 'unsupported', reason: bytes.unreadable };
+    return clip(new TextDecoder('utf-8').decode(bytes), 'raw');
   }
 
   if (file.kind === 'document') {
     const cached = await derivative(env, file.id, 'text');
     if (cached) return clip(cached.content, 'converted');
-    const obj = await env.FILES.get(file.r2_key);
-    if (!obj) return { type: 'unsupported', reason: 'The file content is missing from storage.' };
+    const bytes = await readBytes(env, file);
+    if ('unreadable' in bytes) return { type: 'unsupported', reason: bytes.unreadable };
     try {
-      const md = await ai.toMarkdown(file.name, new Blob([await obj.arrayBuffer()], { type: file.mime }));
+      const md = await ai.toMarkdown(file.name, new Blob([bytes], { type: file.mime }));
       if (!md.text.trim()) return { type: 'unsupported', reason: 'No readable text was found in this document.' };
       await saveDerivative(env, file.id, 'text', md.text.slice(0, 400_000), null);
       return clip(md.text, 'converted');
@@ -81,10 +92,10 @@ export async function readFileForAi(
   if (file.kind === 'audio') {
     const cached = await derivative(env, file.id, 'transcript');
     if (cached) return clip(cached.content, 'transcript');
-    const obj = await env.FILES.get(file.r2_key);
-    if (!obj) return { type: 'unsupported', reason: 'The file content is missing from storage.' };
+    const bytes = await readBytes(env, file);
+    if ('unreadable' in bytes) return { type: 'unsupported', reason: bytes.unreadable };
     try {
-      const res = await ai.transcribe(userId, new Uint8Array(await obj.arrayBuffer()), { runId: opts.runId, signal: opts.signal });
+      const res = await ai.transcribe(userId, bytes, { runId: opts.runId, signal: opts.signal });
       await saveDerivative(env, file.id, 'transcript', res.text, res.modelId);
       return clip(res.text, 'transcript');
     } catch (err) {
@@ -93,9 +104,9 @@ export async function readFileForAi(
   }
 
   if (file.kind === 'image') {
-    const obj = await env.FILES.get(file.r2_key);
-    if (!obj) return { type: 'unsupported', reason: 'The file content is missing from storage.' };
-    return { type: 'image', dataUri: `data:${file.mime};base64,${bytesToBase64(new Uint8Array(await obj.arrayBuffer()))}` };
+    const bytes = await readBytes(env, file);
+    if ('unreadable' in bytes) return { type: 'unsupported', reason: bytes.unreadable };
+    return { type: 'image', dataUri: `data:${file.mime};base64,${bytesToBase64(bytes)}` };
   }
 
   return { type: 'unsupported', reason: `Files of type "${file.kind}" cannot be read by the assistant.` };

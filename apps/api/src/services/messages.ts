@@ -15,6 +15,7 @@ import { publishToUsers } from '../lib/realtime';
 import { normalizeForSearch, safeJsonParse } from '../lib/text';
 import { listMemberIds, requireMember } from './conversations';
 import { fileToDto, messageToDto, type FileRow, type MessageRow } from './dto';
+import { purgeBlobs, type StoredFile } from '../storage/file-store';
 
 export interface NewMessage {
   id?: string;
@@ -241,9 +242,9 @@ export async function deleteMessage(env: Env, userId: string, messageId: string,
     env.DB.prepare('DELETE FROM poll_votes WHERE message_id = ?').bind(messageId),
     env.DB.prepare('UPDATE files SET deleted_at = ? WHERE message_id = ? AND deleted_at IS NULL').bind(now, messageId),
   ]);
-  // Remove the stored blobs; failures are logged and left for the periodic sweep (files.deleted_at is already set).
-  const gone = await all<{ r2_key: string }>(env.DB.prepare('SELECT r2_key FROM files WHERE message_id = ?').bind(messageId));
-  await Promise.allSettled(gone.map((f) => env.FILES.delete(f.r2_key)));
+  // Remove the stored blobs (R2 or Drive); whatever fails is retried by the periodic sweep (files.deleted_at is already set).
+  const gone = await all<StoredFile>(env.DB.prepare('SELECT id, r2_key, tier, drive_id FROM files WHERE message_id = ? AND purged_at IS NULL').bind(messageId));
+  await purgeBlobs(env, gone);
   await publishToUsers(env, await listMemberIds(env, row.conversation_id), { type: 'message.deleted', conversationId: row.conversation_id, messageId });
 }
 

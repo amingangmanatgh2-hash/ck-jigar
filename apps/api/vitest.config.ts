@@ -9,10 +9,20 @@ export default defineConfig({
       return {
         wrangler: { configPath: './wrangler.test.jsonc' },
         miniflare: {
-          bindings: { TEST_MIGRATIONS: migrations },
-          serviceBindings: { AI: { name: 'fake-ai', entrypoint: 'FakeAI' } },
+          bindings: {
+            TEST_MIGRATIONS: migrations,
+            // The cold file tier is configured for tests (against the fake Google server below); the credentials match it.
+            GOOGLE_CLIENT_ID: 'test-client',
+            GOOGLE_CLIENT_SECRET: 'test-secret',
+            GOOGLE_REFRESH_TOKEN: 'test-refresh',
+          },
+          serviceBindings: {
+            AI: { name: 'fake-ai', entrypoint: 'FakeAI' },
+            GOOGLE_API: { name: 'fake-google', entrypoint: 'FakeGoogle' },
+          },
           workers: [
             { name: 'fake-ai', modules: true, scriptPath: 'test/fake-ai/worker.mjs', compatibilityDate: '2026-09-20' },
+            { name: 'fake-google', modules: true, scriptPath: 'test/fake-google/worker.mjs', compatibilityDate: '2026-09-20' },
           ],
         },
       };

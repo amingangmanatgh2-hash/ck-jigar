@@ -28,8 +28,29 @@ export interface Env {
   /** Optional: Cloudflare AI Gateway id used for all Workers AI calls (caching/observability). */
   AI_GATEWAY_ID?: string;
 
+  /** Move files older than this many days from R2 to Google Drive (default 7). */
+  FILES_OFFLOAD_AFTER_DAYS?: string;
+  /** Files at least this big (bytes) move to Drive as soon as they have settled (default 5 MiB). */
+  FILES_OFFLOAD_LARGE_BYTES?: string;
+  /** When R2 holds more than this many bytes the oldest files move to Drive regardless of age (default 8 GiB; R2 free tier is 10 GB). */
+  R2_SOFT_LIMIT_BYTES?: string;
+  /** Name of the Drive folder the app creates (default "AMIN CHAT"). */
+  DRIVE_FOLDER_NAME?: string;
+
   // ---- secrets (wrangler secret put …)
   /** Web-search provider for the research agent: "brave" | "tavily". Unset → web search is not connected. */
   SEARCH_PROVIDER?: string;
   SEARCH_API_KEY?: string;
+  /**
+   * Google Drive as the cold file tier (all three must be set, otherwise files simply stay in R2).
+   * The refresh token must belong to a HUMAN Google account (service accounts have no Drive quota) and use the
+   * `drive.file` scope. See docs/storage-drive.md and `npm run drive:token`.
+   */
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  GOOGLE_REFRESH_TOKEN?: string;
+  /** Optional: a folder this same OAuth client created earlier. Normally unset — the app creates and remembers its own folder. */
+  DRIVE_FOLDER_ID?: string;
+  /** Tests only: when bound, every Google request (OAuth + Drive) goes through this fetcher instead of the network. */
+  GOOGLE_API?: Fetcher;
 }
