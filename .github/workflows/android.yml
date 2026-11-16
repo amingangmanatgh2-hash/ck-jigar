@@ -1,0 +1,130 @@
+# Builds the Android app (the web app inside a Capacitor shell) and checks what ended up in the APK.
+#
+#   - every change to the web app / shared code -> a DEBUG apk (artifact "amin-chat-debug-apk")
+#   - with the four signing secrets below -> also a signed RELEASE apk ("amin-chat-release-apk")
+#   - "Run workflow" lets you compile the server address(es) into the app
+# See docs/android.md.
+name: Android app
+
+on:
+  push:
+    paths:
+      - 'apps/web/**'
+      - 'packages/shared/**'
+      - 'package-lock.json'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+    inputs:
+      api_base:
+        description: 'Address of the deployed Worker, e.g. https://chat.example.com (compiled in as VITE_API_BASE). Empty = the user types it on first launch.'
+        required: false
+        default: ''
+      api_bases:
+        description: 'Relay addresses for people who cannot reach the main one, comma separated (compiled in as VITE_API_BASES). Optional.'
+        required: false
+        default: ''
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Repository variables (Settings > Secrets and variables > Actions > Variables) or the inputs of a manual run
+      VITE_API_BASE: ${{ inputs.api_base || vars.VITE_API_BASE }}
+      VITE_API_BASES: ${{ inputs.api_bases || vars.VITE_API_BASES }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v6
+
+      - run: npm ci
+      - name: Build the web app
+        run: npm run build -w @aminchat/web
+      - name: Copy it into the Android project
+        working-directory: apps/web
+        run: npx cap sync android
+
+      - name: Signing key (only when the secrets exist)
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "Signing with the repository's key."
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "No signing key configured: building the debug apk only (see docs/android.md to add one)."
+          fi
+
+      - name: Build
+        working-directory: apps/web/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          SIGNED: ${{ steps.signing.outputs.signed }}
+        run: |
+          VERSION_NAME=$(node -p "require('../package.json').version")
+          TASKS="assembleDebug"
+          if [ "$SIGNED" = "true" ]; then TASKS="assembleDebug assembleRelease"; fi
+          ./gradlew $TASKS --no-daemon -PversionCode=${{ github.run_number }} -PversionName="$VERSION_NAME"
+
+      - name: Check what is inside the APK
+        run: |
+          set -euo pipefail
+          APK=$(ls apps/web/android/app/build/outputs/apk/debug/*.apk | head -1)
+          AAPT2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+          echo "APK: $APK ($(du -h "$APK" | cut -f1))"
+          "$AAPT2" dump badging "$APK" > badging.txt
+          grep -E "^package: name='chat\.amin\.app\.debug' versionCode='${{ github.run_number }}'" badging.txt
+          grep -E "^sdkVersion:'24'" badging.txt
+          # exactly the permissions the features need and nothing else (*.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION is added by AndroidX)
+          grep -E "^uses-permission:" badging.txt | sed -E "s/.*name='([^']+)'.*/\1/" | sort > permissions.txt
+          cat permissions.txt
+          UNEXPECTED=$(grep -vE '^(android\.permission\.(INTERNET|RECORD_AUDIO|MODIFY_AUDIO_SETTINGS)|chat\.amin\.app\.debug\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION)$' permissions.txt || true)
+          if [ -n "$UNEXPECTED" ]; then echo "Unexpected permissions: $UNEXPECTED"; exit 1; fi
+          grep -q "android.permission.RECORD_AUDIO" permissions.txt
+          # the session token and the E2EE key must never be backed up; no plain-http traffic
+          "$AAPT2" dump xmltree --file AndroidManifest.xml "$APK" > manifest.txt
+          grep -E "allowBackup.*\(type 0x12\)0x0" manifest.txt
+          grep -E "usesCleartextTraffic.*\(type 0x12\)0x0" manifest.txt
+          # the web app and the Capacitor config are really inside
+          unzip -l "$APK" | grep -E "assets/public/index\.html"
+          unzip -l "$APK" | grep -E "assets/public/assets/index-.*\.js"
+          unzip -p "$APK" assets/capacitor.config.json | grep -q '"androidScheme": "https"'
+          if [ -n "${VITE_API_BASE:-}" ]; then
+            unzip -p "$APK" 'assets/public/assets/index-*.js' | grep -qF "$VITE_API_BASE"
+            echo "The server address is compiled in."
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: amin-chat-debug-apk
+          path: apps/web/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        if: steps.signing.outputs.signed == 'true'
+        with:
+          name: amin-chat-release-apk
+          path: apps/web/android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 90

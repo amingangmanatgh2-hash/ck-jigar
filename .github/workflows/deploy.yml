@@ -1,0 +1,61 @@
+# Manual: publishes AMIN CHAT to Cloudflare (web app + Worker + database migrations) with `npm run deploy`.
+#
+# The FIRST deployment must be done once from a computer (docs/deploy.md): Cloudflare creates the database and the file bucket,
+# and their ids must be saved in apps/api/wrangler.jsonc. This workflow refuses to run before that, so it can never create a second,
+# empty database by accident. Worker secrets (RELAY_SECRET, GOOGLE_*, SEARCH_*) are set once on Cloudflare and are not touched here.
+#
+# Repository secrets: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN
+# (token permissions: Workers Scripts Edit, D1 Edit, Workers R2 Storage Edit, Account Settings Read, Workers AI Read).
+name: Deploy to Cloudflare
+
+on:
+  workflow_dispatch:
+    inputs:
+      smoke_url:
+        description: 'Address of the deployed service, e.g. https://chat.example.com. When given, /api/health is checked after the deployment.'
+        required: false
+        default: ''
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Tests first
+        run: npm test
+      - name: Is this an update of an existing deployment?
+        run: |
+          # the very function `npm run deploy` uses to choose the order of its steps
+          if ! node -e "import('./scripts/deploy.mjs').then(async (m) => { const fs = await import('node:fs'); const p = m.planDeploy(fs.readFileSync('apps/api/wrangler.jsonc', 'utf8')); console.log('deploy order:', p.order); process.exit(p.order === 'migrate-first' ? 0 : 1); })"; then
+            echo "::error::The database id is not saved in apps/api/wrangler.jsonc yet, so this looks like the FIRST deployment. Do that once from a computer (docs/deploy.md), commit the ids it writes, then use this workflow."
+            exit 1
+          fi
+      - name: Deploy (migrations first, then the new code)
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run deploy
+      - name: Check that it answers
+        if: inputs.smoke_url != ''
+        env:
+          URL: ${{ inputs.smoke_url }}
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS "${URL%/}/api/health" | tee health.json | grep -q '"service":"amin-chat"'; then echo; echo "OK"; exit 0; fi
+            echo "not ready yet (attempt $i)"; sleep 10
+          done
+          echo "::error::${URL%/}/api/health did not answer like AMIN CHAT"; exit 1
