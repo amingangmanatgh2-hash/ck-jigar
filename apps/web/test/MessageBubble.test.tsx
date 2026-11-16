@@ -28,9 +28,14 @@ describe('MessageBubble', () => {
     expect(screen.queryByRole('status')).toBeNull();
   });
 
-  it('shows the final stored text once the message is complete, and offers copy', () => {
-    render(<MessageBubble message={message({ id: 'done', status: 'sent', body: '**Done.** Anything else?', meta: { ai: { modelId: 'gemma' } } as never })} mine={false} sender={aiUser} />);
-    expect(screen.getByText('Done.')).toBeInTheDocument();
+  it('shows the final stored text once the message is complete, and offers copy', async () => {
+    const { container } = render(<MessageBubble message={message({ id: 'done', status: 'sent', body: '**Done.** Anything else?', meta: { ai: { modelId: 'gemma' } } as never })} mine={false} sender={aiUser} />);
+    // The Markdown renderer is loaded on demand: the answer is readable immediately as plain text…
+    expect(container.querySelector('.md-plain')).toHaveTextContent('**Done.** Anything else?');
+    // …and is replaced by the formatted version as soon as the renderer is there.
+    expect(await screen.findByText('Done.')).toBeInTheDocument();
+    expect(container.querySelector('strong')).toHaveTextContent('Done.');
+    expect(container.querySelector('.md-plain')).toBeNull();
     expect(screen.getAllByRole('button', { name: /copy/i }).length).toBeGreaterThan(0);
   });
 

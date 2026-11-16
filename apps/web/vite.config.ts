@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import { serviceWorkerPlugin } from './plugins/serviceWorker.ts';
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
 
@@ -21,7 +22,7 @@ const proxy = {
 };
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), serviceWorkerPlugin()],
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   server: { host: '0.0.0.0', port: 5173, strictPort: true, allowedHosts: true, proxy },
   preview: { host: '0.0.0.0', port: 4173, strictPort: true, allowedHosts: true, proxy },

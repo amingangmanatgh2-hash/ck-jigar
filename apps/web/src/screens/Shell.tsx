@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Icon, type IconName } from '../components/Icon';
-import { Toaster } from '../components/ui';
+import { Spinner, Toaster } from '../components/ui';
 import { useT, type Key } from '../lib/i18n';
 import { realtime } from '../lib/realtime';
 import { parseHash, useRoute } from '../lib/router';
@@ -10,10 +10,12 @@ import { sessionStore } from '../state/session';
 import { AiChatScreen } from './AiChat';
 import { Chat } from './ChatRouter';
 import { ChatList } from './ChatList';
-import { MemoryScreen } from './Memory';
-import { ModelsScreen } from './Models';
-import { SettingsScreen } from './Settings';
-import { TasksScreen } from './Tasks';
+
+// Secondary screens are loaded when first opened: the chat list and the conversations are what the app must show first.
+const MemoryScreen = lazy(() => import('./Memory').then((m) => ({ default: m.MemoryScreen })));
+const ModelsScreen = lazy(() => import('./Models').then((m) => ({ default: m.ModelsScreen })));
+const SettingsScreen = lazy(() => import('./Settings').then((m) => ({ default: m.SettingsScreen })));
+const TasksScreen = lazy(() => import('./Tasks').then((m) => ({ default: m.TasksScreen })));
 
 type Section = 'chats' | 'tasks' | 'memory' | 'models' | 'settings';
 const NAV: { id: Section; icon: IconName; label: Key; href: string }[] = [
@@ -84,7 +86,17 @@ export function Shell() {
           <ChatList activeId={activeId} />
         </aside>
       )}
-      <main className="main-pane">{main}</main>
+      <main className="main-pane">
+        <Suspense
+          fallback={
+            <div className="center pad">
+              <Spinner label={t('common.loading')} />
+            </div>
+          }
+        >
+          {main}
+        </Suspense>
+      </main>
       <Toaster />
     </div>
   );

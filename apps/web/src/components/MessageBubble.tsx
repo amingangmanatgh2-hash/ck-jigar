@@ -10,7 +10,8 @@ import { AiAvatar, Avatar, NameWithBadge } from './Avatar';
 import { Icon } from './Icon';
 import { useLiveBody } from '../lib/streams';
 import { renderPlain } from '../lib/text';
-import { copyText, Markdown } from './Markdown';
+import { copyText } from '../lib/clipboard';
+import { MarkdownText } from './MarkdownText';
 import { RunPanel } from './RunPanel';
 import { IconButton } from './ui';
 
@@ -184,7 +185,7 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
                 </span>
               </p>
             ) : (
-              text && <Markdown text={text} streaming={streaming} />
+              text && <MarkdownText text={text} streaming={streaming} />
             )
           ) : (
             text && (
