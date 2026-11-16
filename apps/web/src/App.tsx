@@ -34,9 +34,9 @@ export function App() {
     );
   }
   return (
-    <>
-      <Shell />
+    <div className="app-frame">
       <ConnectionBanner />
-    </>
+      <Shell />
+    </div>
   );
 }
