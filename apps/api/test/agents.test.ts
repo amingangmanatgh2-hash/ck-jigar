@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { payloadHash } from '../src/agents/approvals';
+import { UNTRUSTED_CONTENT_RULE } from '../src/agents/prompts';
 import { deliverDueReminders, expireApprovals, recoverStaleRuns, resumeLostDecisions } from '../src/cron';
 import { resumeRun } from '../src/services/run-control';
 import { MODEL, calls, script, type Rule } from './ai-helpers';
@@ -620,5 +621,32 @@ describe('task engine — cancel, files and boundaries', () => {
     expect(mem.items).toEqual([]); // nothing stored without approval
     expect(mem.suggestions).toHaveLength(1);
     expect(mem.suggestions[0]).toMatchObject({ kind: 'preference', content: 'Prefers short answers in Persian', status: 'pending' });
+  });
+});
+
+describe('prompt-injection guard in a real run', () => {
+  it('the planner, the argument writer and the final answer all carry the rule (what the model actually received)', async () => {
+    const user = await newUser('inject');
+    await script([
+      route('personal'),
+      plan([
+        { title: 'List the tasks', tool: 'todo_list', args: {} },
+        { title: 'Add the task', tool: 'todo_add', args: {}, deferred: true },
+      ]),
+      derived({ title: 'Buy milk' }),
+      finalAnswer('Done.'),
+      titleRule,
+    ]);
+    const started = await start(user, 'Add buy milk to my tasks', 'auto');
+    const run = await waitForRun(user, started.run.id);
+    expect(run.status).toBe('completed');
+    expect(run.steps.map((s: any) => [s.tool, s.status])).toEqual([['todo_list', 'completed'], ['todo_add', 'completed']]);
+
+    const seen = await calls();
+    for (const purpose of ['plan', 'args', 'chat']) {
+      const mine = seen.filter((c) => c.purpose === purpose);
+      expect(mine.length, `no ${purpose} call was recorded`).toBeGreaterThan(0);
+      for (const c of mine) expect(c.system, `the ${purpose} prompt`).toContain(UNTRUSTED_CONTENT_RULE);
+    }
   });
 });

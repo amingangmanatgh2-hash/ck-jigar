@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ChatRequest, ChatOutcome } from '../ai/client';
 import { RUN_LIMITS } from '../config/limits';
 import { extractJson, truncate } from '../lib/text';
-import { nowBlock, type PromptUser } from './prompts';
+import { UNTRUSTED_CONTENT_RULE, nowBlock, type PromptUser } from './prompts';
 import { AGENTS, CONCRETE_AGENT_IDS, type AgentDef, type ConcreteAgentId } from './registry';
 import type { ToolDef } from './tools/types';
 
@@ -131,6 +131,7 @@ export async function planSteps(
     '- Tools marked [needs user approval] are planned only when the user explicitly asked for that action; the user always reviews them before they run.',
     '- Dates and times are the user\'s local time, written YYYY-MM-DD or YYYY-MM-DD HH:mm, computed from the current date above.',
     o.assist ? '- This is a shared chat: actions always target this chat; never plan anything else.' : '',
+    `- ${UNTRUSTED_CONTENT_RULE}`,
   ].filter(Boolean).join('\n');
 
   const userMsg = `${o.recent ? `Recent conversation:\n${o.recent}\n\n` : ''}${o.attachments ? `Attached files:\n${o.attachments}\n\n` : ''}Latest request:\n${truncate(o.text, 3000)}`;
@@ -192,7 +193,8 @@ export async function deriveArgs(
         content:
           `You produce the JSON arguments for ONE tool call of the AMIN AI assistant.\n${nowBlock(o.user)}\n` +
           `Tool: ${o.tool.id} — ${o.tool.description}\nArguments: ${o.tool.argsHint}\n` +
-          'Reply with ONLY a JSON object containing the arguments. Use ids exactly as they appear in the earlier results; never invent ids. Dates are the user\'s local time (YYYY-MM-DD or YYYY-MM-DD HH:mm).',
+          'Reply with ONLY a JSON object containing the arguments. Use ids exactly as they appear in the earlier results; never invent ids. Dates are the user\'s local time (YYYY-MM-DD or YYYY-MM-DD HH:mm).\n' +
+          UNTRUSTED_CONTENT_RULE,
       },
       {
         role: 'user',
