@@ -6,7 +6,9 @@ import { newId } from '../lib/ids';
 import type { AppEnv } from './auth';
 
 export const requestContext: MiddlewareHandler<AppEnv> = async (c, next) => {
-  const id = newId('req').slice(0, 20);
+  // The whole id: within one millisecond the ids of an isolate differ only in their LAST character, so cutting it short
+  // would give concurrent requests the same correlation id.
+  const id = newId('req');
   c.set('requestId', id);
   await next();
   c.header('X-Request-Id', id);
