@@ -1,6 +1,6 @@
 import type { ApiErrorBody } from '@aminchat/shared';
 import { pool } from './endpointPool';
-import { getServer, isNative, normalizeServerUrl, safeGet, setServer } from './server';
+import { getServer, isNative, normalizeServerUrl, safeGet, setServer as saveServer } from './server';
 
 export class ApiError extends Error {
   constructor(
@@ -17,7 +17,13 @@ export class ApiError extends Error {
 
 const TOKEN_KEY = 'aminchat.token';
 
-export { getServer, isNative, normalizeServerUrl, setServer };
+export { getServer, isNative, normalizeServerUrl };
+
+/** Saves the address of the server (Android). Whatever fallback the app had chosen for the previous address no longer applies. */
+export function setServer(url: string): void {
+  saveServer(url);
+  pool.primaryChanged();
+}
 
 /** Base URL requests go to right now: the main address, or a working alternative when the main one is blocked (see endpointPool). */
 export const activeBase = (): string => pool.active();
@@ -89,7 +95,11 @@ export const SAME_ADDRESS_RETRY_DELAYS_MS = [400, 1200];
 const MAX_SWITCHES = 2;
 
 export class TransportError extends Error {
-  constructor(public readonly kind: 'network' | 'timeout' | 'foreign') {
+  /**
+   * network / timeout / foreign: nothing usable came back from that address.
+   * switched: nothing is wrong with the request — the pool moved to another address while it was waiting, so it is sent again there.
+   */
+  constructor(public readonly kind: 'network' | 'timeout' | 'foreign' | 'switched') {
     super(`transport failure: ${kind}`);
     this.name = 'TransportError';
   }
@@ -97,7 +107,7 @@ export class TransportError extends Error {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-async function attempt<T>(base: string, method: string, path: string, init: { headers: Record<string, string>; body?: BodyInit }, opts: RequestOptions, parse: (res: Response) => Promise<T>): Promise<T> {
+async function attempt<T>(base: string, method: string, path: string, init: { headers: Record<string, string>; body?: BodyInit; switchSignal?: AbortSignal }, opts: RequestOptions, parse: (res: Response) => Promise<T>): Promise<T> {
   const ctrl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -110,6 +120,11 @@ async function attempt<T>(base: string, method: string, path: string, init: { he
     if (outer.aborted) ctrl.abort();
     else outer.addEventListener('abort', onAbort, { once: true });
   }
+  const sw = init.switchSignal;
+  if (sw) {
+    if (sw.aborted) ctrl.abort();
+    else sw.addEventListener('abort', onAbort, { once: true });
+  }
   try {
     const res = await fetch(apiUrl(buildPath(path, opts.query), base), { method, headers: init.headers, body: init.body, signal: ctrl.signal });
     if (!res.headers.has('X-Request-Id')) throw new TransportError('foreign');
@@ -118,10 +133,12 @@ async function attempt<T>(base: string, method: string, path: string, init: { he
   } catch (err) {
     if (err instanceof ApiError) throw err;
     if (outer?.aborted) throw err; // the caller cancelled on purpose
+    if (sw?.aborted) throw new TransportError('switched');
     throw err instanceof TransportError ? err : new TransportError(timedOut ? 'timeout' : 'network');
   } finally {
     clearTimeout(timer);
     outer?.removeEventListener('abort', onAbort);
+    sw?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -139,8 +156,13 @@ async function perform<T>(method: string, path: string, opts: RequestOptions, pa
   let switches = 0;
   let sameAddress = 0;
   for (;;) {
+    // A request that may be repeated gives up its address the moment the pool moves elsewhere (the address was found dead by a
+    // probe, or the main one is back) instead of waiting out a timeout on it. One that must not be repeated stays where it is.
+    const switched = new AbortController();
+    const attemptBase = base;
+    const off = safe ? pool.onActiveChange((active) => active !== attemptBase && switched.abort()) : () => undefined;
     try {
-      const out = await attempt(base, method, path, { headers, body }, opts, parse);
+      const out = await attempt(base, method, path, { headers, body, switchSignal: switched.signal }, opts, parse);
       pool.reportSuccess(base);
       return out;
     } catch (err) {
@@ -151,6 +173,11 @@ async function perform<T>(method: string, path: string, opts: RequestOptions, pa
           if (err.status === 401 && token && !authCall) onUnauthorized?.();
         }
         throw err;
+      }
+      if (err.kind === 'switched' && switches < MAX_SWITCHES) {
+        base = activeBase(); // nothing failed: the pool chose another address, and said so
+        switches++;
+        continue;
       }
       const next = switches < MAX_SWITCHES ? await pool.failover(base) : null;
       if (next !== null && next !== base && safe) {

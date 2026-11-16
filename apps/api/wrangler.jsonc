@@ -45,7 +45,11 @@
     "ALLOWED_ORIGINS": "",
     // Usernames that become administrators when they register (comma separated). Set this to your own username
     // (not a reserved one such as "admin" or "root").
-    "ADMIN_USERNAMES": ""
+    "ADMIN_USERNAMES": "",
+    // Alternative addresses of this service (comma separated origins): relays you run, mirrors … The apps learn them from
+    // GET /api/health and use them when this address is blocked; they are also trusted as CORS origins. See docs/connectivity.md.
+    "PUBLIC_ENDPOINTS": ""
+    // Secret RELAY_SECRET (wrangler secret put RELAY_SECRET): lets your relays tell this Worker who the real client is.
     // Optional: "AI_GATEWAY_ID": "<your AI Gateway id>", "DEFAULT_DAILY_TOKENS": "300000", "DEFAULT_DAILY_REQUESTS": "400"
     // Optional (cold file tier, see docs/storage-drive.md): "FILES_OFFLOAD_AFTER_DAYS": "7", "FILES_OFFLOAD_LARGE_BYTES": "5242880", "R2_SOFT_LIMIT_BYTES": "8589934592"
     // Optional secrets (wrangler secret put): SEARCH_PROVIDER = brave | tavily, SEARCH_API_KEY

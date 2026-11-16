@@ -29,7 +29,7 @@ export interface MessagePage {
 
 export const Auth = {
   register: (b: { username: string; password: string; displayName?: string; locale?: string; timezone?: string }) => http.post<AuthResponse>('/api/auth/register', b),
-  login: (b: { username: string; password: string }) => http.post<AuthResponse>('/api/auth/login', b),
+  login: (b: { username: string; password: string }) => http.post<AuthResponse>('/api/auth/login', b, undefined, { retry: true }), // creates only another session: safe to repeat on another address
   logout: () => http.post<{ ok: true }>('/api/auth/logout'),
   me: () => http.get<{ user: SelfDto }>('/api/auth/me'),
   updateMe: (b: Partial<{ displayName: string; bio: string | null; locale: string; timezone: string }>) => http.patch<{ user: SelfDto }>('/api/auth/me', b),

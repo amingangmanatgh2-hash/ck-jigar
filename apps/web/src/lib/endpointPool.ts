@@ -1,5 +1,5 @@
 import { MAX_ENDPOINTS, cleanEndpoints, normalizeEndpoint } from '@aminchat/shared';
-import { getServer } from './server';
+import { getBuiltinEndpoints, getServer } from './server';
 import { createStore } from './store';
 
 /**
@@ -7,6 +7,7 @@ import { createStore } from './store';
  *
  *   primary  the address the app was opened from / configured with (web: this origin, Android: the saved server URL)
  *   custom   addresses the user added (a relay a friend runs, a second domain …)
+ *   builtin  addresses compiled into this build (VITE_API_BASES): usable on the very first launch, before anything was learned
  *   learned  addresses the server itself advertised on GET /api/health (PUBLIC_ENDPOINTS), remembered for the day the primary is blocked
  *
  * When a request fails at the transport level, `failover()` probes the others and switches to the first that answers like our
@@ -14,7 +15,7 @@ import { createStore } from './store';
  * While on a fallback the primary is re-checked from time to time and used again as soon as it works.
  */
 
-export type EndpointSource = 'primary' | 'custom' | 'learned';
+export type EndpointSource = 'primary' | 'custom' | 'builtin' | 'learned';
 export type EndpointHealth = 'unknown' | 'ok' | 'down';
 
 export interface EndpointInfo {
@@ -46,9 +47,18 @@ export interface PoolDeps {
   primary: () => string;
   /** Origin of the page (web). A learned/custom address equal to it is the primary, not an alternative. */
   pageOrigin: () => string;
+  /** Addresses shipped inside the app. Optional: none by default. */
+  builtin?: () => string[];
   probeTimeoutMs: number;
-  /** How often the primary is re-checked while a fallback is in use. */
+  /** The longest wait between two looks at the primary while a fallback is in use (the wait starts at `recheckSoonMs` and doubles). */
   recheckMs: number;
+  /** The first look at the primary after switching to a fallback: a switch is often caused by a blip, so it should not last long. */
+  recheckSoonMs?: number;
+  /**
+   * False when the device itself has no network (airplane mode, no signal): then no address can be blamed and nothing is probed.
+   * Only an explicit "offline" counts — "online" says nothing about whether the server can be reached.
+   */
+  isOnline?: () => boolean;
 }
 
 const STORE_KEY = 'aminchat.endpoints';
@@ -73,7 +83,10 @@ export class EndpointPool {
   private inflight: Promise<string | null> | null = null;
   /** When the last failover found nothing: for a few seconds further failures do not wait for another round of probes. */
   private noneAt = -Infinity;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private running = false;
+  private recheckTimer: ReturnType<typeof setTimeout> | null = null;
+  private recheckDelay = 0;
+  private lastWakeCheck = -Infinity;
   private listeners = new Set<(active: string) => void>();
 
   constructor(private readonly deps: PoolDeps) {
@@ -83,7 +96,7 @@ export class EndpointPool {
 
   /* ---------------------------------------------------------------- reading */
 
-  /** primary first, then custom, then learned; no duplicates. */
+  /** primary first, then custom, then built-in, then learned; no duplicates. */
   candidates(): { base: string; source: EndpointSource }[] {
     const out: { base: string; source: EndpointSource }[] = [{ base: this.primaryBase(), source: 'primary' }];
     const seen = new Set([out[0]!.base]);
@@ -98,6 +111,7 @@ export class EndpointPool {
       }
     };
     add(this.saved.custom, 'custom');
+    add(this.deps.builtin?.() ?? [], 'builtin');
     add(this.saved.learned, 'learned');
     return out;
   }
@@ -226,6 +240,9 @@ export class EndpointPool {
    * answers (the others keep being checked in the background), or null when there is none. Concurrent callers share one run.
    */
   failover(failed: string): Promise<string | null> {
+    // No network on the device at all: this failure says nothing about `failed`, and no alternative could answer either.
+    // (Blaming the address here is what used to leave the app on a relay after the signal came back.)
+    if (this.deps.isOnline?.() === false) return Promise.resolve(null);
     this.reportFailure(failed);
     if (this.active() !== failed) return Promise.resolve(this.active()); // somebody already switched
     if (this.deps.now() - this.noneAt < 5000) return Promise.resolve(null); // everything was down a moment ago
@@ -274,23 +291,104 @@ export class EndpointPool {
     this.saved.active = base === this.primaryBase() ? null : base;
     this.persist();
     this.publish();
-    if (this.active() !== before) this.listeners.forEach((fn) => fn(this.active()));
+    if (this.active() !== before) {
+      this.recheckDelay = 0; // a new fallback starts the schedule over
+      this.scheduleRecheck();
+      this.listeners.forEach((fn) => fn(this.active()));
+    }
   }
 
   /* ---------------------------------------------------------------- background checks */
 
-  /** Starts the periodic re-check of the primary while a fallback is in use, and a first look at all addresses. */
+  /**
+   * Looks at the primary address first. Only when it does not answer are the others checked (and contacted): in the normal case
+   * nobody but the main server ever hears from this device, and a throttled link is not burdened with a handful of probes.
+   */
+  async checkPrimaryFirst(): Promise<void> {
+    this.state.set((s) => ({ ...s, probing: true }));
+    let primaryAnswers = false;
+    try {
+      const r = await this.probe(this.primaryBase());
+      this.record(r);
+      primaryAnswers = r.ok;
+      if (primaryAnswers) this.choose();
+    } finally {
+      this.state.set((s) => ({ ...s, probing: false }));
+      this.publish();
+    }
+    if (!primaryAnswers) await this.probeAll();
+  }
+
+  /** While a fallback is in use, look at the primary alone (not at everybody) and return to it as soon as it answers. */
+  private async recheckPrimary(): Promise<void> {
+    const r = await this.probe(this.primaryBase());
+    this.record(r);
+    if (r.ok) this.switchTo(r.base);
+    this.publish();
+  }
+
+  /**
+   * While a fallback is in use the primary is looked at again after `recheckSoonMs`, then after twice as long, and so on up to
+   * `recheckMs`; it costs one tiny request each. On the primary itself nothing is scheduled.
+   */
+  private scheduleRecheck(): void {
+    if (this.recheckTimer) clearTimeout(this.recheckTimer);
+    this.recheckTimer = null;
+    if (!this.running || this.active() === this.primaryBase()) return;
+    const soon = this.deps.recheckSoonMs ?? 15_000;
+    this.recheckDelay = this.recheckDelay === 0 ? soon : Math.min(this.recheckDelay * 2, this.deps.recheckMs);
+    const delay = Math.min(this.recheckDelay, this.deps.recheckMs);
+    this.recheckTimer = setTimeout(() => {
+      this.recheckTimer = null;
+      void this.recheckPrimary().finally(() => this.scheduleRecheck());
+    }, delay);
+  }
+
+  /**
+   * The network came back (`online`) or the app was brought to the front: whatever was concluded while the connection was bad may be
+   * out of date. Look at the primary at once — and forget "everything was down a moment ago".
+   */
+  private wake = (event?: Event): void => {
+    if (!this.running) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    if (this.deps.isOnline?.() === false) return;
+    if (event?.type === 'visibilitychange') {
+      if (this.deps.now() - this.lastWakeCheck < 10_000) return; // switching tabs back and forth is not a reason to ask the server each time
+    }
+    this.lastWakeCheck = this.deps.now();
+    this.noneAt = -Infinity;
+    void this.checkPrimaryFirst();
+  };
+
+  /** Starts the look at the primary now, and the re-checks of it for as long as a fallback is in use. */
   start(): void {
-    if (this.timer) return;
-    void this.probeAll();
-    this.timer = setInterval(() => {
-      if (this.active() !== this.primaryBase()) void this.probeAll();
-    }, this.deps.recheckMs);
+    if (this.running) return;
+    this.running = true;
+    this.lastWakeCheck = this.deps.now();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', this.wake);
+      document.addEventListener('visibilitychange', this.wake);
+    }
+    void this.checkPrimaryFirst();
+    this.recheckDelay = 0;
+    this.scheduleRecheck();
+  }
+
+  /** The address the app is configured with changed (Android: the user typed a server). A fallback chosen for the old one no longer applies. */
+  primaryChanged(): void {
+    this.switchTo(this.primaryBase());
+    this.noneAt = -Infinity;
+    void this.checkPrimaryFirst();
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.running = false;
+    if (this.recheckTimer) clearTimeout(this.recheckTimer);
+    this.recheckTimer = null;
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('online', this.wake);
+      document.removeEventListener('visibilitychange', this.wake);
+    }
   }
 
   /* ---------------------------------------------------------------- persistence + view */
@@ -334,7 +432,10 @@ export const pool = new EndpointPool({
   fetchFn: (...args) => fetch(...args),
   now: () => Date.now(),
   primary: getServer,
+  builtin: getBuiltinEndpoints,
   pageOrigin: () => (typeof location !== 'undefined' ? location.origin : ''),
   probeTimeoutMs: 4000,
   recheckMs: 120_000,
+  recheckSoonMs: 15_000,
+  isOnline: () => typeof navigator === 'undefined' || navigator.onLine !== false,
 });

@@ -216,3 +216,228 @@ describe('health answer shape', () => {
     expect(Object.keys(HEALTH()).sort()).toEqual(['endpoints', 'environment', 'ok', 'service', 'time']);
   });
 });
+
+describe('EndpointPool — built-in addresses (VITE_API_BASES)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('are listed after the primary and the user’s own addresses and before learned ones, without duplicates', () => {
+    let shipped: string[] = [];
+    const { pool } = make(new FakeNet(), { builtin: () => shipped });
+    expect(pool.addCustom(B)).toBe('ok'); // the user added B before this app version shipped it
+    shipped = [C, A, B, 'https://relay-d.test', C];
+    pool.learn(['https://relay-d.test', 'https://relay-e.test']);
+    expect(pool.candidates()).toEqual([
+      { base: A, source: 'primary' },
+      { base: B, source: 'custom' }, // the user's own choice wins over the same address shipped in the app
+      { base: C, source: 'builtin' },
+      { base: 'https://relay-d.test', source: 'builtin' },
+      { base: 'https://relay-e.test', source: 'learned' },
+    ]);
+  });
+
+  it('cannot be removed or re-added, and learning never duplicates them', () => {
+    const { pool } = make(new FakeNet(), { builtin: () => [B] });
+    expect(pool.addCustom(B)).toBe('duplicate');
+    pool.learn([B]);
+    pool.remove(B);
+    expect(pool.candidates()).toEqual([
+      { base: A, source: 'primary' },
+      { base: B, source: 'builtin' },
+    ]);
+  });
+
+  it('are what a first launch fails over to when its main address is blocked — before anything was ever learned', async () => {
+    const net = new FakeNet();
+    net.set(A, 'down').set(B, 'ok');
+    net.advertised = [C];
+    const { pool } = make(net, { builtin: () => [B] });
+    const switched: string[] = [];
+    pool.onActiveChange((a) => switched.push(a));
+    const next = pool.failover(A);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await next).toBe(B);
+    expect(pool.active()).toBe(B);
+    expect(pool.state.get().usingFallback).toBe(true);
+    expect(switched).toEqual([B]);
+    expect(pool.candidates().map((c) => c.source)).toEqual(['primary', 'builtin', 'learned']); // and it learned C from B's answer
+  });
+
+  it('are checked like every other address (a blocked built-in is shown as down, not as ready)', async () => {
+    const net = new FakeNet();
+    net.set(A, 'ok').set(B, 'down');
+    const { pool } = make(net, { builtin: () => [B] });
+    const done = pool.probeAll();
+    await vi.advanceTimersByTimeAsync(5000);
+    await done;
+    const byBase = Object.fromEntries(pool.state.get().endpoints.map((e) => [e.base, e.health]));
+    expect(byBase).toEqual({ [A]: 'ok', [B]: 'down' });
+    expect(pool.active()).toBe(A);
+  });
+});
+
+describe('getBuiltinEndpoints', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('reads VITE_API_BASES: comma or space separated, validated, de-duplicated; empty when unset', async () => {
+    const { getBuiltinEndpoints } = await import('../src/lib/server');
+    vi.stubEnv('VITE_API_BASES', '');
+    expect(getBuiltinEndpoints()).toEqual([]);
+    vi.stubEnv('VITE_API_BASES', 'https://one.example, two.example:8443/ignored  ftp://no.example javascript:alert(1) https://one.example');
+    expect(getBuiltinEndpoints()).toEqual(['https://one.example', 'https://two.example:8443']);
+  });
+});
+
+describe('EndpointPool — after a bad connection (found by a real browser run: the app stayed on a relay after the signal came back)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    Reflect.deleteProperty(document, 'visibilityState');
+  });
+  const tick = (ms = 10) => vi.advanceTimersByTimeAsync(ms);
+  const healthChecksOf = (net: FakeNet, base: string) => net.log.filter((r) => r.base === base && r.path === '/api/health').length;
+
+  async function onTheRelay(over: Partial<PoolDeps> = {}) {
+    const net = new FakeNet().set(A, 'down').set(B, 'ok');
+    const made = make(net, over);
+    made.pool.learn([B]);
+    made.pool.start();
+    await tick();
+    expect(made.pool.active()).toBe(B); // the primary did not answer, the relay did
+    return { net, ...made };
+  }
+
+  it('blames no address while the device itself has no network, and contacts nobody', async () => {
+    const net = new FakeNet().set(A, 'ok').set(B, 'ok');
+    const { pool } = make(net, { isOnline: () => false });
+    pool.learn([B]);
+    expect(await pool.failover(A)).toBeNull();
+    expect(net.fetch).not.toHaveBeenCalled(); // nothing could answer, and a relay need not learn that this device exists
+    expect(pool.state.get().endpoints.find((e) => e.base === A)?.health).toBe('unknown'); // not condemned
+    expect(pool.active()).toBe(A);
+  });
+
+  it('only an explicit "offline" counts: an unknown or "online" device is treated as before', async () => {
+    const net = new FakeNet().set(A, 'down').set(B, 'ok');
+    const { pool } = make(net, { isOnline: () => true });
+    pool.learn([B]);
+    const run = pool.failover(A);
+    await tick();
+    expect(await run).toBe(B);
+  });
+
+  it('looks at the primary again soon after switching to a relay, then less and less often, up to the limit', async () => {
+    const { pool, net } = await onTheRelay();
+    const base = healthChecksOf(net, A);
+    await tick(15_000);
+    expect(healthChecksOf(net, A)).toBe(base + 1); // after 15 s
+    await tick(30_000);
+    expect(healthChecksOf(net, A)).toBe(base + 2); // 30 s later
+    await tick(60_000);
+    expect(healthChecksOf(net, A)).toBe(base + 3); // 60 s later
+    await tick(120_000);
+    expect(healthChecksOf(net, A)).toBe(base + 4); // 120 s later: the limit …
+    await tick(120_000);
+    expect(healthChecksOf(net, A)).toBe(base + 5); // … which then stays
+    expect(pool.active()).toBe(B);
+    pool.stop();
+  });
+
+  it('is back on the primary within 15 seconds of it working again — not after two minutes', async () => {
+    const { pool, net } = await onTheRelay();
+    net.set(A, 'ok');
+    await tick(14_000);
+    expect(pool.active()).toBe(B); // not yet looked at
+    await tick(1_100);
+    expect(pool.active()).toBe(A);
+    pool.stop();
+  });
+
+  it('does not keep re-checking when it is on the primary (nothing to come back to)', async () => {
+    const net = new FakeNet().set(A, 'ok').set(B, 'ok');
+    const { pool } = make(net);
+    pool.learn([B]);
+    pool.start();
+    await tick();
+    const calls = net.fetch.mock.calls.length;
+    await tick(600_000);
+    expect(net.fetch.mock.calls.length).toBe(calls); // not one request in ten minutes
+    pool.stop();
+  });
+
+  it('goes back to the primary the moment the network returns (the browser’s "online" event)', async () => {
+    const { pool, net } = await onTheRelay();
+    net.set(A, 'ok');
+    window.dispatchEvent(new Event('online'));
+    await tick();
+    expect(pool.active()).toBe(A);
+    pool.stop();
+  });
+
+  it('ignores "online" while the device still reports no network', async () => {
+    let online = false;
+    const { pool, net } = await onTheRelay({ isOnline: () => online });
+    net.set(A, 'ok');
+    window.dispatchEvent(new Event('online'));
+    await tick();
+    expect(pool.active()).toBe(B);
+    online = true;
+    window.dispatchEvent(new Event('online'));
+    await tick();
+    expect(pool.active()).toBe(A);
+    pool.stop();
+  });
+
+  it('forgets "everything was down a moment ago" when the network returns', async () => {
+    const net = new FakeNet().set(A, 'down').set(B, 'down');
+    const { pool } = make(net);
+    pool.learn([B]);
+    pool.start();
+    await tick();
+    const run = pool.failover(A);
+    await tick();
+    expect(await run).toBeNull(); // the 5 s "nowhere to go" window opens
+    net.set(B, 'ok'); // only the relay is reachable now
+    window.dispatchEvent(new Event('online'));
+    await tick();
+    expect(pool.active()).toBe(B); // found at once, not after waiting out the window
+    pool.stop();
+  });
+
+  it('also looks when the app is brought back to the front — but not while hidden, and not more than every 10 s', async () => {
+    const { pool, net } = await onTheRelay();
+    net.set(A, 'ok');
+    const visibility = (state: 'hidden' | 'visible') => {
+      Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    visibility('hidden');
+    await tick();
+    expect(pool.active()).toBe(B); // hidden: nothing happens
+    visibility('visible');
+    await tick();
+    expect(pool.active()).toBe(B); // the app has just looked (it started a moment ago): throttled
+    await tick(10_000);
+    visibility('visible');
+    await tick();
+    expect(pool.active()).toBe(A);
+    pool.stop();
+  });
+
+  it('stops listening and checking when it is stopped', async () => {
+    const { pool, net } = await onTheRelay();
+    pool.stop();
+    const calls = net.fetch.mock.calls.length;
+    window.dispatchEvent(new Event('online'));
+    await tick(600_000);
+    expect(net.fetch.mock.calls.length).toBe(calls);
+  });
+});

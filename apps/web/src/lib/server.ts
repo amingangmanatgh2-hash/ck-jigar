@@ -1,5 +1,5 @@
 import { Capacitor } from '@capacitor/core';
-import { normalizeEndpoint } from '@aminchat/shared';
+import { normalizeEndpoint, parseEndpointList } from '@aminchat/shared';
 
 export const SERVER_KEY = 'aminchat.server';
 
@@ -23,6 +23,15 @@ export function safeGet(key: string): string | null {
 export function getServer(): string {
   const stored = safeGet(SERVER_KEY) ?? (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
   return stored.replace(/\/+$/, '');
+}
+
+/**
+ * Addresses compiled into this build (VITE_API_BASES, comma or space separated): relays and mirrors the maintainers run for people
+ * whose direct route to the service is blocked. They are what a brand-new install can fail over to before it has ever reached the
+ * server (learned addresses only arrive after one successful answer).
+ */
+export function getBuiltinEndpoints(): string[] {
+  return parseEndpointList(import.meta.env.VITE_API_BASES as string | undefined);
 }
 
 /** "" = use this origin; null = not a usable address. */

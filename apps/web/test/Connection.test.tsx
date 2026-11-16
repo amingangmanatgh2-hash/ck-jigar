@@ -12,7 +12,7 @@ const A = 'https://main.test';
 const B = 'https://relay-b.test';
 
 // the components talk to the module-level pool: give it one wired to the scripted network
-const h = vi.hoisted(() => ({ net: null as unknown as import('./fakeNet').FakeNet, pool: null as unknown as import('../src/lib/endpointPool').EndpointPool }));
+const h = vi.hoisted(() => ({ net: null as unknown as import('./fakeNet').FakeNet, pool: null as unknown as import('../src/lib/endpointPool').EndpointPool, builtin: [] as string[] }));
 vi.mock('../src/lib/endpointPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/lib/endpointPool')>();
   const { FakeNet: Net } = await import('./fakeNet');
@@ -24,6 +24,7 @@ vi.mock('../src/lib/endpointPool', async (importOriginal) => {
     now: () => Date.now(),
     primary: () => 'https://main.test',
     pageOrigin: () => 'https://page.test',
+    builtin: () => h.builtin,
     probeTimeoutMs: 4000,
     recheckMs: 120_000,
   });
@@ -38,6 +39,7 @@ function resetWorld() {
   h.net.behaviors.clear();
   h.net.log.length = 0;
   h.net.advertised = [];
+  h.builtin = [];
   realtime.state.set('idle');
   outbox.state.set({ entries: [], flushing: false });
 }
@@ -136,6 +138,18 @@ describe('EndpointList', () => {
     expect(within(items[0]!).queryByRole('button', { name: T('conn.remove') })).toBeNull();
     await userEvent.click(within(items[1]!).getByRole('button', { name: T('conn.remove') }));
     expect(screen.getAllByTestId('endpoint')).toHaveLength(1);
+  });
+
+  it('shows addresses that ship with the app as such, and does not let them be removed', async () => {
+    h.builtin = ['https://relay-built-in.test'];
+    h.net.set(A, 'down').set('https://relay-built-in.test', 'ok');
+    h.pool.addCustom(B);
+    render(<EndpointList />);
+    const items = await screen.findAllByTestId('endpoint');
+    expect(items.map((i) => i.textContent)).toEqual([expect.stringContaining('main.test'), expect.stringContaining('relay-b.test'), expect.stringContaining('relay-built-in.test')]);
+    expect(items[2]).toHaveTextContent(T('conn.source.builtin'));
+    expect(within(items[2]!).queryByRole('button', { name: T('conn.remove') })).toBeNull();
+    expect(within(items[1]!).getByRole('button', { name: T('conn.remove') })).toBeInTheDocument();
   });
 
   it('adds an address, and says what is wrong with one that cannot be used', async () => {
