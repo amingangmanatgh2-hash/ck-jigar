@@ -103,8 +103,8 @@ jobs:
 
           # Shown on the run page (as notices), so a failing check below can be understood without downloading logs.
           annotate() { local text; text=$(cat | sed -e ':a' -e 'N' -e '$!ba' -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g'); echo "::notice title=$1::$text"; }
-          grep -E "^(package|sdkVersion|targetSdkVersion|uses-permission|uses-feature|application-label|launchable-activity)" badging.txt | annotate "APK facts (aapt2 badging)"
-          grep -E "allowBackup|usesCleartextTraffic|debuggable|networkSecurityConfig" manifest.txt | annotate "Manifest flags"
+          grep -E "^(package|sdkVersion|minSdkVersion|targetSdkVersion|uses-permission|uses-feature|application-label:|launchable-activity)" badging.txt | annotate "APK facts (aapt2 badging)"
+          grep -E "minSdkVersion|targetSdkVersion|allowBackup|usesCleartextTraffic|debuggable|networkSecurityConfig" manifest.txt | annotate "Manifest flags"
 
           failed=0
           check() { local desc="$1"; shift; if "$@" > /dev/null 2>&1; then echo "ok   - $desc"; else echo "FAIL - $desc"; echo "::error title=APK check failed::$desc"; failed=1; fi; }
@@ -115,10 +115,12 @@ jobs:
           grep -E "^uses-permission:" badging.txt | sed -E "s/.*name='([^']+)'.*/\1/" | sort > permissions.txt
           echo "permissions: $(tr '\n' ' ' < permissions.txt)"
           only_expected_permissions() { ! grep -vE '^(android\.permission\.(INTERNET|RECORD_AUDIO|MODIFY_AUDIO_SETTINGS)|chat\.amin\.app\.debug\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION)$' permissions.txt; }
+          # the minimum Android version, from the manifest itself (uses-sdk) or from the badging summary, whichever spelling this aapt2 uses
+          min_sdk_is_24() { has "minSdkVersion\\(0x[0-9a-f]+\\)=(24|\\(type 0x10\\)0x18)" manifest.txt || has "^(sdkVersion|minSdkVersion):'24'" badging.txt; }
           address_compiled() { grep -qF "$VITE_API_BASE" main.js; }
 
           check "package id chat.amin.app.debug and versionCode = run number" has "^package: name='chat\\.amin\\.app\\.debug' versionCode='${RUN_NUMBER}'" badging.txt
-          check "minSdk 24" has "^sdkVersion:'24'" badging.txt
+          check "minSdk 24" min_sdk_is_24
           check "no permission beyond INTERNET, RECORD_AUDIO and MODIFY_AUDIO_SETTINGS" only_expected_permissions
           check "microphone permission present (voice input)" has "^android\\.permission\\.RECORD_AUDIO$" permissions.txt
           check "allowBackup is false (the session token and the E2EE key must never be backed up)" is_false allowBackup
