@@ -88,32 +88,46 @@ jobs:
           ./gradlew $TASKS --no-daemon -PversionCode=${{ github.run_number }} -PversionName="$VERSION_NAME"
 
       - name: Check what is inside the APK
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
-          set -euo pipefail
+          set -u
           APK=$(ls apps/web/android/app/build/outputs/apk/debug/*.apk | head -1)
           AAPT2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
-          echo "APK: $APK ($(du -h "$APK" | cut -f1))"
+          echo "APK: $APK ($(du -h "$APK" | cut -f1)), $AAPT2"
           "$AAPT2" dump badging "$APK" > badging.txt
-          grep -E "^package: name='chat\.amin\.app\.debug' versionCode='${{ github.run_number }}'" badging.txt
-          grep -E "^sdkVersion:'24'" badging.txt
+          "$AAPT2" dump xmltree --file AndroidManifest.xml "$APK" > manifest.txt
+          unzip -l "$APK" > files.txt
+          unzip -p "$APK" assets/capacitor.config.json > capacitor.config.json || true
+          unzip -p "$APK" 'assets/public/assets/index-*.js' > main.js || true
+
+          # Shown on the run page (as notices), so a failing check below can be understood without downloading logs.
+          annotate() { local text; text=$(cat | sed -e ':a' -e 'N' -e '$!ba' -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g'); echo "::notice title=$1::$text"; }
+          grep -E "^(package|sdkVersion|targetSdkVersion|uses-permission|uses-feature|application-label|launchable-activity)" badging.txt | annotate "APK facts (aapt2 badging)"
+          grep -E "allowBackup|usesCleartextTraffic|debuggable|networkSecurityConfig" manifest.txt | annotate "Manifest flags"
+
+          failed=0
+          check() { local desc="$1"; shift; if "$@" > /dev/null 2>&1; then echo "ok   - $desc"; else echo "FAIL - $desc"; echo "::error title=APK check failed::$desc"; failed=1; fi; }
+          has() { grep -Eq "$1" "$2"; }
+          # aapt2 prints a boolean attribute as =false in current versions and as (type 0x12)0x0 in older ones
+          is_false() { has "$1\\(0x[0-9a-f]+\\)=(false|\\(type 0x12\\)0x0)" manifest.txt; }
           # exactly the permissions the features need and nothing else (*.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION is added by AndroidX)
           grep -E "^uses-permission:" badging.txt | sed -E "s/.*name='([^']+)'.*/\1/" | sort > permissions.txt
-          cat permissions.txt
-          UNEXPECTED=$(grep -vE '^(android\.permission\.(INTERNET|RECORD_AUDIO|MODIFY_AUDIO_SETTINGS)|chat\.amin\.app\.debug\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION)$' permissions.txt || true)
-          if [ -n "$UNEXPECTED" ]; then echo "Unexpected permissions: $UNEXPECTED"; exit 1; fi
-          grep -q "android.permission.RECORD_AUDIO" permissions.txt
-          # the session token and the E2EE key must never be backed up; no plain-http traffic
-          "$AAPT2" dump xmltree --file AndroidManifest.xml "$APK" > manifest.txt
-          grep -E "allowBackup.*\(type 0x12\)0x0" manifest.txt
-          grep -E "usesCleartextTraffic.*\(type 0x12\)0x0" manifest.txt
-          # the web app and the Capacitor config are really inside
-          unzip -l "$APK" | grep -E "assets/public/index\.html"
-          unzip -l "$APK" | grep -E "assets/public/assets/index-.*\.js"
-          unzip -p "$APK" assets/capacitor.config.json | grep -q '"androidScheme": "https"'
-          if [ -n "${VITE_API_BASE:-}" ]; then
-            unzip -p "$APK" 'assets/public/assets/index-*.js' | grep -qF "$VITE_API_BASE"
-            echo "The server address is compiled in."
-          fi
+          echo "permissions: $(tr '\n' ' ' < permissions.txt)"
+          only_expected_permissions() { ! grep -vE '^(android\.permission\.(INTERNET|RECORD_AUDIO|MODIFY_AUDIO_SETTINGS)|chat\.amin\.app\.debug\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION)$' permissions.txt; }
+          address_compiled() { grep -qF "$VITE_API_BASE" main.js; }
+
+          check "package id chat.amin.app.debug and versionCode = run number" has "^package: name='chat\\.amin\\.app\\.debug' versionCode='${RUN_NUMBER}'" badging.txt
+          check "minSdk 24" has "^sdkVersion:'24'" badging.txt
+          check "no permission beyond INTERNET, RECORD_AUDIO and MODIFY_AUDIO_SETTINGS" only_expected_permissions
+          check "microphone permission present (voice input)" has "^android\\.permission\\.RECORD_AUDIO$" permissions.txt
+          check "allowBackup is false (the session token and the E2EE key must never be backed up)" is_false allowBackup
+          check "usesCleartextTraffic is false (https only)" is_false usesCleartextTraffic
+          check "the web app is inside the APK (index.html)" has "assets/public/index\\.html" files.txt
+          check "the web app is inside the APK (main script)" has "assets/public/assets/index-.*\\.js" files.txt
+          check "Capacitor serves it from https" grep -q '"androidScheme": "https"' capacitor.config.json
+          if [ -n "${VITE_API_BASE:-}" ]; then check "the server address is compiled in" address_compiled; fi
+          exit $failed
 
       - uses: actions/upload-artifact@v7
         with:
