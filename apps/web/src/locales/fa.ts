@@ -478,7 +478,7 @@ export const fa: Record<keyof typeof en, string> = {
   'storage.health.degraded': 'ناپایدار — در حال تلاش مجدد',
   'storage.health.auth_failed': 'مجوز دسترسی از دست رفته',
   'storage.health.quota_full': 'فضای Drive پر است',
-  'storage.attention.drive_auth_failed': 'Google Drive توکن ذخیره‌شده را نپذیرفت (باطل یا منقضی شده است). فایل‌های تازه در R2 می‌مانند و ممکن است فضای آن پر شود. با دستور «npm run drive:token» توکن جدید بگیرید و مقدار GOOGLE_REFRESH_TOKEN را عوض کنید.',
+  'storage.attention.drive_auth_failed': 'Google Drive توکن ذخیره‌شده را نپذیرفت (باطل یا منقضی شده است؛ اگر این اتفاق هر هفته تکرار می‌شود، صفحهٔ رضایت Google هنوز در حالت «Testing» است و باید «In production» شود). فایل‌های تازه در R2 می‌مانند و ممکن است فضای آن پر شود. با دستور «npm run drive:token» توکن جدید بگیرید و مقدار GOOGLE_REFRESH_TOKEN را عوض کنید.',
   'storage.attention.drive_full': 'فضای Google Drive متصل پر است. فایل‌های تازه تا آزاد شدن فضا در R2 می‌مانند؛ خواندن و حذف فایل‌ها همچنان کار می‌کند.',
   'storage.attention.drive_degraded': 'Google Drive چند بار پشت‌سرهم موقتاً خطا داده است. کار به‌طور خودکار دوباره تلاش می‌کند.',
   'storage.attention.r2_filling_without_drive': 'فضای R2 دارد پر می‌شود و Google Drive وصل نیست. برای بیرون بردن فایل‌های قدیمی از Cloudflare، Drive را وصل کنید (docs/storage-drive.md).',

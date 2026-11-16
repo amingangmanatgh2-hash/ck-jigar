@@ -23,6 +23,10 @@ apps/web/android/app/src/main/assets/capacitor.plugins.json
 apps/web/android/capacitor-cordova-android-plugins/
 *.apk
 *.aab
+# Signing keys are never committed (docs/android.md)
+*.keystore
+*.jks
+keystore.b64
 .idea/
 .vscode/
 

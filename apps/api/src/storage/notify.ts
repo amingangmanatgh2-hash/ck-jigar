@@ -8,8 +8,8 @@ import { allState, credentialFingerprint, getState, setState } from './state';
 
 const TEXT = {
   auth_failed: {
-    fa: '⚠️ اتصال Google Drive قطع شده است (توکن باطل یا منقضی شده). تا برطرف شدن، فایل‌های جدید فقط در R2 نگه‌داری می‌شوند و فضای Cloudflare ممکن است پر شود. برای رفع: با دستور «npm run drive:token» توکن جدید بگیرید و مقدار GOOGLE_REFRESH_TOKEN را عوض کنید. جزئیات: docs/storage-drive.md',
-    en: '⚠️ The Google Drive connection is broken (the token was revoked or has expired). Until it is fixed, files stay in R2 and Cloudflare storage may fill up. Fix: create a new token with "npm run drive:token" and update the GOOGLE_REFRESH_TOKEN secret. Details: docs/storage-drive.md',
+    fa: '⚠️ اتصال Google Drive قطع شده است (توکن باطل یا منقضی شده؛ اگر این اتفاق هر هفته تکرار می‌شود، صفحهٔ رضایت Google هنوز در حالت «Testing» است و باید «In production» شود). تا برطرف شدن، فایل‌های جدید فقط در R2 نگه‌داری می‌شوند و فضای Cloudflare ممکن است پر شود. برای رفع: با دستور «npm run drive:token» توکن جدید بگیرید و مقدار GOOGLE_REFRESH_TOKEN را عوض کنید. جزئیات: docs/storage-drive.md',
+    en: '⚠️ The Google Drive connection is broken (the token was revoked or has expired; if this happens every week, the Google consent screen is still in "Testing" and must be set to "In production"). Until it is fixed, files stay in R2 and Cloudflare storage may fill up. Fix: create a new token with "npm run drive:token" and update the GOOGLE_REFRESH_TOKEN secret. Details: docs/storage-drive.md',
   },
   quota_full: {
     fa: '⚠️ فضای حساب Google Drive پر شده است. تا خالی شدن فضا، فایل‌ها فقط در R2 نگه‌داری می‌شوند و فضای Cloudflare ممکن است پر شود.',

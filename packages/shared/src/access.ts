@@ -6,7 +6,8 @@
  *  - Direct chats: the *invoking* user grants access for themselves; ANY participant can block AI for everybody.
  *  - Groups: owners/admins set the level for the whole group and decide who may invoke the assistant.
  *  - End-to-end encrypted chats: the server cannot read them, so access is always 'none'; the user must
- *    deliberately select the messages to share with the assistant (see POST /api/ai/share).
+ *    deliberately select the messages to share with the assistant (the `shared` field of POST /api/ai/threads/:id/messages: the
+ *    client decrypts them and sends the chosen `excerpts`).
  */
 
 export type AiAccessMode = 'off' | 'mention' | 'context';

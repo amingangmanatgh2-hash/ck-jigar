@@ -480,7 +480,7 @@ export const en = {
   'storage.health.degraded': 'Unstable — retrying',
   'storage.health.auth_failed': 'Authorisation lost',
   'storage.health.quota_full': 'Drive is full',
-  'storage.attention.drive_auth_failed': 'Google Drive rejected the saved token (it was revoked or has expired). New files stay in R2, so the bucket may fill up. Create a new token with "npm run drive:token" and update the GOOGLE_REFRESH_TOKEN secret.',
+  'storage.attention.drive_auth_failed': 'Google Drive rejected the saved token (it was revoked or has expired; if this happens every week, the Google consent screen is still in "Testing" and must be set to "In production"). New files stay in R2, so the bucket may fill up. Create a new token with "npm run drive:token" and update the GOOGLE_REFRESH_TOKEN secret.',
   'storage.attention.drive_full': 'The connected Google Drive is full. New files stay in R2 until space is freed; reading and deleting keep working.',
   'storage.attention.drive_degraded': 'Google Drive keeps failing temporarily. The job retries automatically.',
   'storage.attention.r2_filling_without_drive': 'The R2 bucket is filling up and Google Drive is not connected. Connect Drive (docs/storage-drive.md) to move old files out of Cloudflare.',
