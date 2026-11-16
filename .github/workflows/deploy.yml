@@ -1,18 +1,24 @@
-# Manual: publishes AMIN CHAT to Cloudflare (web app + Worker + database migrations) with `npm run deploy`.
+# Manual ("Run workflow"): publishes AMIN CHAT to YOUR Cloudflare account — web app, Worker, database and file bucket — and shows the
+# address of the live service at the top of the run page.
 #
-# The FIRST deployment must be done once from a computer (docs/deploy.md): Cloudflare creates the database and the file bucket,
-# and their ids must be saved in apps/api/wrangler.jsonc. This workflow refuses to run before that, so it can never create a second,
-# empty database by accident. Worker secrets (RELAY_SECRET, GOOGLE_*, SEARCH_*) are set once on Cloudflare and are not touched here.
+# One-time setup (Settings > Secrets and variables > Actions > New repository secret):
+#   CLOUDFLARE_ACCOUNT_ID   your account id (dashboard > Workers & Pages > right-hand side)
+#   CLOUDFLARE_API_TOKEN    My Profile > API Tokens > Create Token > template "Edit Cloudflare Workers"
+#                           (if the run complains about D1 or R2 permissions, add "D1: Edit" and "Workers R2 Storage: Edit")
+# Also, once: open Workers & Pages in the Cloudflare dashboard so your account has a workers.dev address (it asks you to pick one).
+# Before the first run, put your own username in "ADMIN_USERNAMES" in apps/api/wrangler.jsonc, and register it as soon as the
+# service is up (docs/deploy.md).
 #
-# Repository secrets: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN
-# (token permissions: Workers Scripts Edit, D1 Edit, Workers R2 Storage Edit, Account Settings Read, Workers AI Read).
+# The first run creates the D1 database and the R2 bucket. Wrangler looks them up by name, so a re-run or an already existing one is
+# never duplicated. Every later run applies the migrations first and deploys the new code after. Worker secrets (RELAY_SECRET,
+# GOOGLE_*, SEARCH_*) live on Cloudflare, are set once and are not touched here.
 name: Deploy to Cloudflare
 
 on:
   workflow_dispatch:
     inputs:
       smoke_url:
-        description: 'Address of the deployed service, e.g. https://chat.example.com. When given, /api/health is checked after the deployment.'
+        description: 'Only if you use your own domain: its address, e.g. https://chat.example.com. The workers.dev address is checked automatically.'
         required: false
         default: ''
 
@@ -26,7 +32,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     environment: production
     steps:
       - uses: actions/checkout@v7
@@ -35,27 +41,43 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - name: Tests first
+      - name: Tests first (nothing is published when one fails)
         run: npm test
-      - name: Is this an update of an existing deployment?
-        run: |
-          # the very function `npm run deploy` uses to choose the order of its steps
-          if ! node -e "import('./scripts/deploy.mjs').then(async (m) => { const fs = await import('node:fs'); const p = m.planDeploy(fs.readFileSync('apps/api/wrangler.jsonc', 'utf8')); console.log('deploy order:', p.order); process.exit(p.order === 'migrate-first' ? 0 : 1); })"; then
-            echo "::error::The database id is not saved in apps/api/wrangler.jsonc yet, so this looks like the FIRST deployment. Do that once from a computer (docs/deploy.md), commit the ids it writes, then use this workflow."
-            exit 1
-          fi
-      - name: Deploy (migrations first, then the new code)
+      - name: Show the plan
+        run: npm run deploy -- --dry-run
+      - name: Deploy (build, then migrate and publish in the safe order)
+        id: deploy
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: npm run deploy
-      - name: Check that it answers
-        if: inputs.smoke_url != ''
-        env:
-          URL: ${{ inputs.smoke_url }}
         run: |
-          for i in 1 2 3 4 5 6; do
-            if curl -fsS "${URL%/}/api/health" | tee health.json | grep -q '"service":"amin-chat"'; then echo; echo "OK"; exit 0; fi
-            echo "not ready yet (attempt $i)"; sleep 10
+          set -o pipefail
+          npm run deploy 2>&1 | tee deploy.log
+      - name: Address of the live service
+        id: address
+        if: success()
+        run: |
+          URL=$(sed -E 's/\x1b\[[0-9;]*m//g' deploy.log | grep -oE 'https://[A-Za-z0-9.-]+\.workers\.dev' | head -1 || true)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          {
+            if [ -n "$URL" ]; then
+              echo "## AMIN CHAT is live: $URL"
+              echo
+              echo "Open it, register the username you put in ADMIN_USERNAMES (that account becomes the administrator), then check Settings > AI models."
+            else
+              echo "## Deployed"
+              echo
+              echo "Wrangler printed no workers.dev address (is workers_dev turned off or a custom domain used?). Check the log of the previous step."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check that it answers like AMIN CHAT
+        if: success() && (inputs.smoke_url != '' || steps.address.outputs.url != '')
+        env:
+          TARGET: ${{ inputs.smoke_url || steps.address.outputs.url }}
+        run: |
+          # a new workers.dev address can take a minute to become reachable
+          for i in $(seq 1 12); do
+            if curl -fsS "${TARGET%/}/api/health" | tee health.json | grep -q '"service":"amin-chat"'; then echo; echo "OK: ${TARGET%/}/api/health"; exit 0; fi
+            echo "not ready yet (attempt $i of 12)"; sleep 10
           done
-          echo "::error::${URL%/}/api/health did not answer like AMIN CHAT"; exit 1
+          echo "::error::${TARGET%/}/api/health did not answer like AMIN CHAT"; exit 1
