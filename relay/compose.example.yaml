@@ -1,0 +1,30 @@
+# The relay behind Caddy, which gets and renews the HTTPS certificate by itself.
+#   1. point the DNS name of your relay at this server
+#   2. create .env next to this file:  RELAY_DOMAIN=relay.example.com  UPSTREAM=https://amin-chat.example.workers.dev  RELAY_SECRET=...
+#   3. docker compose -f compose.example.yaml up -d --build
+# (Not run in the environment this was written in — it only has Node. Check it on your server; docs/connectivity.md.)
+services:
+  relay:
+    build: .
+    restart: unless-stopped
+    environment:
+      UPSTREAM: ${UPSTREAM:?set UPSTREAM in .env}
+      RELAY_SECRET: ${RELAY_SECRET:?set RELAY_SECRET in .env}
+      TRUST_PROXY: "1"
+    expose:
+      - "8080"
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      RELAY_DOMAIN: ${RELAY_DOMAIN:?set RELAY_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile.example:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - relay
+volumes:
+  caddy-data: {}

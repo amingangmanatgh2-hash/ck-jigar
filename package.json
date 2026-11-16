@@ -24,7 +24,8 @@
     "db:migrate:remote": "npm run db:migrate:remote -w @aminchat/api",
     "verify:ai": "node scripts/verify-workers-ai.mjs",
     "dev:api:offline": "node scripts/dev-api.mjs --offline",
-    "test:scripts": "node --test scripts/*.test.mjs",
-    "drive:token": "node scripts/drive-token.mjs"
+    "test:scripts": "node --test scripts/*.test.mjs relay/*.test.mjs",
+    "drive:token": "node scripts/drive-token.mjs",
+    "relay": "node relay/relay.mjs"
   }
 }
