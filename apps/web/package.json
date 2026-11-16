@@ -16,7 +16,6 @@
   "dependencies": {
     "@aminchat/shared": "*",
     "@capacitor/android": "^8.6.2",
-    "@capacitor/app": "^8.0.0",
     "@capacitor/core": "^8.6.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
