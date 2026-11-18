@@ -25,6 +25,10 @@ jobs:
           cache: npm
       - name: Install (exactly what package-lock.json says)
         run: npm ci
+      # Only what ships to users (production dependencies) can fail the build. The development tools have one open advisory without a fix
+      # (picomatch, see docs/SECURITY.md); gating on it would make every build red for something nobody can fix yet.
+      - name: Known vulnerabilities in production dependencies (high or worse)
+        run: npm audit --omit=dev --audit-level=high
       - name: Type-check (shared, api, web)
         run: npm run typecheck
       - name: Tests (scripts + relay, API on workerd, web)
