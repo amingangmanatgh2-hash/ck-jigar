@@ -184,6 +184,32 @@ describe('@AMINAI in direct chats — permission first', () => {
     expect((await calls()).find((c) => c.purpose === 'assist')!.user).toContain('ends 31 March 2027');
   });
 
+  it("sends the model only the files of the mention and of the message it replies to, never other files from the chat's history", async () => {
+    const alice = await registerUser('a');
+    const bob = await registerUser('b');
+    const chat = await directChat(alice, bob);
+    await setDirectAccess(alice, chat, 'context');
+    const form = new FormData();
+    form.set('file', new File(['The safe combination is 4711.'], 'safe.txt', { type: 'text/plain' }));
+    const file = (await json(await api('POST', '/api/files', { token: bob.token, body: form }))).file;
+    const bobsMessage = await sendText(bob, chat, 'here is the file you asked for', { fileIds: [file.id] });
+
+    // context level: the earlier message's TEXT is part of the transcript, its attached file is not read
+    await script([answer('A summary.')]);
+    const plain = await sendText(alice, chat, '@AMINAI summarize this chat');
+    await aiReply(alice, chat, plain.ai.messageId);
+    const summary = (await calls()).find((c) => c.purpose === 'assist')!;
+    expect(summary.user).toContain('here is the file you asked for');
+    expect(summary.user).not.toContain('4711');
+
+    // replying to that very message is how the user points the assistant at its file
+    await script([answer('The combination is 4711.')]);
+    const reply = await sendText(alice, chat, '@AMINAI what is in this file?', { replyToId: bobsMessage.message.id });
+    await aiReply(alice, chat, reply.ai.messageId);
+    const pointed = (await calls()).find((c) => c.purpose === 'assist')!;
+    expect(pointed.user).toContain('4711');
+  });
+
   it('applies the invoker\'s quota and rate limit without blocking the message itself', async () => {
     const alice = await registerUser('a');
     const bob = await registerUser('b');

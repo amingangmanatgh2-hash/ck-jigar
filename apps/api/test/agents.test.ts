@@ -590,6 +590,45 @@ describe('task engine — cancel, files and boundaries', () => {
     expect(JSON.stringify(stolen)).not.toContain('ACME');
   });
 
+  it("reads a file shared in a chat for a member only while that chat's AI level is 'context', and never for an outsider", async () => {
+    const owner = await newUser('fowner');
+    const member = await newUser('fmember');
+    const outsider = await newUser('foutsider');
+    const group = (await json(await api('POST', '/api/conversations/group', { token: owner.token, json: { title: 'Files', memberIds: [member.id] } }))).conversation;
+
+    const form = new FormData();
+    form.set('file', new File(['Secret plan: launch on 2027-01-05'], 'plan.txt', { type: 'text/plain' }));
+    const file = (await json(await api('POST', '/api/files', { token: owner.token, body: form }))).file;
+    const posted = await api('POST', `/api/conversations/${group.id}/messages`, { token: owner.token, json: { body: 'the plan', fileIds: [file.id], clientId: 'file-plan-0001' } });
+    expect(posted.status).toBe(201);
+
+    const attempt = async (user: TestUser) => {
+      await script([plan([{ title: 'Read', tool: 'file_read', args: { fileId: file.id } }]), finalAnswer('done'), titleRule]);
+      const started = await start(user, 'Read that file', 'file');
+      return waitForRun(user, started.run.id);
+    };
+    const setLevel = (level: string) => api('PUT', `/api/conversations/${group.id}/ai-policy`, { token: owner.token, json: { level, invokeRoles: 'all' } });
+
+    // the member is in the chat, but with the AI off or limited to mentions the assistant may not read the chat's files for them
+    for (const level of ['off', 'mention']) {
+      expect((await setLevel(level)).status).toBe(200);
+      const run = await attempt(member);
+      expect(run.steps[0], `level ${level}`).toMatchObject({ status: 'failed', errorCode: 'FILE_NOT_FOUND' });
+      expect(JSON.stringify(run)).not.toContain('2027-01-05');
+    }
+
+    // once the group's admins allow context, the member's assistant may read it
+    expect((await setLevel('context')).status).toBe(200);
+    const allowed = await attempt(member);
+    expect(allowed.steps[0].status).toBe('completed');
+    expect(allowed.steps[0].output.text).toContain('launch on 2027-01-05');
+
+    // somebody who is not in the chat can never read it, whatever the level
+    const denied = await attempt(outsider);
+    expect(denied.steps[0]).toMatchObject({ status: 'failed', errorCode: 'FILE_NOT_FOUND' });
+    expect(JSON.stringify(denied)).not.toContain('2027-01-05');
+  });
+
   it('enforces one active run per thread and three per user', async () => {
     const user = await newUser('limits');
     await script([{ when: { purpose: 'chat' }, respond: { text: 'slow slow slow slow slow slow slow slow slow', chunkDelayMs: 400 } }, titleRule]);

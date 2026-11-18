@@ -10,7 +10,7 @@ This document says what AMIN CHAT protects, how, and — just as important — w
 - **دسترسی هوش مصنوعی به چت‌ها را خودِ کاربران/مدیران گروه تعیین می‌کنند** و پیش‌فرض «خاموش» است. در چت‌های رمزنگاری‌شده (E2EE) سرور اصلاً چیزی نمی‌خواند؛ فقط پیام‌هایی که کاربر آگاهانه انتخاب کند.
 - **عملیات حساس (ارسال پیام، نظرسنجی، اطلاعیه، دسته‌بندی فایل) بدون تأیید کاربر اجرا نمی‌شود**؛ تأیید به محتوای دقیق گره خورده است و ۲۴ ساعت اعتبار دارد.
 - **حافظهٔ هر کاربر جداست**، قابل مشاهده، ویرایش، خاموش‌کردن و حذف است؛ دستیار فقط پیشنهاد می‌دهد.
-- **محدودیت‌های صادقانه:** ورود دومرحله‌ای، بازیابی گذرواژه و حذف حساب ندارد؛ توکن مرورگر در `localStorage` است؛ رمزنگاری E2EE فاقد تأیید کلید و forward secrecy است و ممیزی مستقل نشده؛ برای صفحهٔ وب CSP تنظیم نشده؛ مالک حساب Cloudflare می‌تواند پیام‌های غیر E2EE را در D1 ببیند. فهرست کامل در بخش «آنچه محافظت نمی‌شود».
+- **محدودیت‌های صادقانه:** ورود دومرحله‌ای، بازیابی گذرواژه و حذف حساب ندارد؛ توکن مرورگر در `localStorage` است؛ ابزار نظارت درون‌برنامه ندارد (مدیر برنامه نمی‌تواند حسابی را غیرفعال کند؛ فقط با ویرایش مستقیم پایگاه داده ممکن است)؛ رمزنگاری E2EE فاقد تأیید کلید و forward secrecy است و ممیزی مستقل نشده؛ برای صفحهٔ وب CSP تنظیم نشده؛ مالک حساب Cloudflare می‌تواند پیام‌های غیر E2EE را در D1 ببیند. فهرست کامل در بخش «آنچه محافظت نمی‌شود».
 - **گزارش آسیب‌پذیری:** جزئیات حمله را در Issue عمومی ننویسید؛ مستقیم به مالک مخزن بگویید (قابلیت «Private vulnerability reporting» در GitHub هنوز روشن نیست؛ مالک می‌تواند از Settings ← Code security روشنش کند).
 
 </div>
@@ -34,7 +34,7 @@ Out of scope: the operator themself. Whoever owns the Cloudflare account can rea
 ## Authentication and sessions
 
 - **Passwords:** PBKDF2-HMAC-SHA256, **100 000 iterations** (the most Cloudflare Workers allow; `apps/api/src/lib/crypto.ts`), a random 16-byte salt per password, stored as `pbkdf2-sha256$iterations$salt$hash`. Comparison is constant-time. Login does the same amount of work for an unknown user as for a wrong password and returns the same error, so usernames cannot be enumerated by response or timing. 8–128 characters; there is no complexity rule and no breached-password check.
-- **Sessions:** an opaque token of 256 random bits, returned once at login. Only its **SHA-256** is stored, so a database leak does not yield usable tokens. A session lasts 30 days (fixed, not extended by use), appears in the user's session list, can be revoked individually, and **changing the password revokes every other session**. A disabled account is rejected on its very next request. The assistant's own account (`kind = 'ai'`) can never hold a session.
+- **Sessions:** an opaque token of 256 random bits, returned once at login. Only its **SHA-256** is stored, so a database leak does not yield usable tokens. A session lasts 30 days (fixed, not extended by use), appears in the user's session list, can be revoked individually, and **changing the password revokes every other session**. The `users.disabled_at` flag is honoured on every request: an account that carries it is rejected on its very next request, cannot log in, and disappears from search and profiles (a test pins all of this). **Nothing in the app sets the flag**, see limitation 3. An already-open live-update connection is not closed by it (the Durable Object does not look at the flag), and a WebSocket ticket issued just before it was set stays usable for up to 60 seconds; no new ticket or long-poll request is accepted (both need an authenticated session). The assistant's own account (`kind = 'ai'`) can never hold a session.
 - **Brute force:** 30 register/login calls per 10 minutes per IP and 10 login (or change-password) attempts per 15 minutes per username, in a Durable Object.
 - **No cookies.** The token travels in an `Authorization` header, so cross-site request forgery does not apply.
 - **WebSocket:** the token is never put in a URL. A signed-in client asks for a **single-use ticket valid 60 seconds** and opens the socket with it; the upgrade also checks the browser `Origin`.
@@ -70,7 +70,23 @@ The rate limiter **fails open**: if the Durable Object is unreachable the reques
 | Direct chat | the *invoking* user grants `mention` (the invoking message and what it replies to) or `context` (recent history). **Anyone in the chat can block AI for everybody** |
 | Group | owners/admins set the level `off` / `mention` / `context` / `assist` for the whole group and who may invoke it (`all` / `admins`). A member cannot opt out of what the admins enabled |
 
-A denied `@AMINAI` mention is reported to the sender only; nothing is posted into the chat and no model is called. Context is bounded (≤ 60 messages / 8 000 tokens) and a file is only described if the caller may read it. Tests: `apps/api/test/assist.test.ts` and the policy cases in `unit.test.ts`.
+A denied `@AMINAI` mention is reported to the sender only; nothing is posted into the chat and no model is called. Context is bounded (≤ 60 messages / 8 000 tokens). Tests: `apps/api/test/assist.test.ts` and the policy cases in `unit.test.ts`.
+
+### Which files the assistant reads, and for whom
+
+A stored file can reach a model by exactly three routes (every caller of the code that turns a file into model input was checked), each with its own rule:
+
+1. **Your AMIN AI conversation:** the files you attached yourself. Attaching requires that you own the file and that it is not attached to anything else (otherwise `INVALID_ATTACHMENT`).
+2. **An `@AMINAI` mention in a chat:** only the files of **the message that carries the mention and the message it replies to** (same chat; the policy above has already admitted this invoker for this chat). The recent-messages transcript of the `context` level is text only: files of earlier messages are not read, and encrypted messages never enter it. To point the assistant at somebody's file, reply to that message while mentioning it.
+3. **The File agent's tools:** `file_list` shows only the caller's own uploads. `file_read` asks `canAiReadFile`: the caller's own files, or a file attached to a chat **only if the caller's AI access to that chat reads at the `context` level** (in a group, the admin levels `context` and `assist` both do; `off` and `mention` do not). Anyone else gets `FILE_NOT_FOUND`.
+
+The function that converts a file (`readFileForAi`) does not check who is asking. It only checks that the file is technically readable (≤ 12 MiB, a supported type, content available); the access decision is made before it is called, by the three routes above.
+
+Voice input (`POST /api/ai/transcribe`) is not a stored file: the recording travels in the request, is transcribed and is not kept.
+
+Worth knowing: when you mention AMIN AI in a reply to somebody else's message that has a file, that file is sent to the model on your behalf. You can already open it, and you chose to invoke the assistant there.
+
+Tests: `agents.test.ts` (each branch of `canAiReadFile`: own file, a chat's file at `off` / `mention` / `context`, an outsider) and `assist.test.ts` (only the mention's and the reply's files are sent). Both were checked by breaking the code on purpose and watching them fail.
 
 ## Agents, tools and approvals
 
@@ -138,14 +154,14 @@ Errors are logged with the request id, the error message and a truncated stack. 
 - GitHub Actions are referenced by version tag (for example `actions/checkout@v7`), not pinned to commit SHAs. Pin them if you need stricter supply-chain control.
 
 ## What is not protected (known limitations)
-
 1. **The Cloudflare account owner can read non-E2EE content.** Messages and files are stored in plain text in D1 and R2 (encrypted at rest only by Cloudflare's platform). Admin role inside the app does not grant this, but the operator's dashboard does.
-2. **No two-factor authentication, no email, no password reset, no self-service account deletion.** A forgotten password means a lost account. An admin can disable an account but cannot reset a password.
-3. **The token lives in `localStorage`** in the browser, and there is **no CSP** on the web app (see above).
-4. **E2EE limits** listed above: no key verification, no forward secrecy, per-device keys, not independently audited.
-5. **Prompt injection cannot be ruled out**; the approval step is the safeguard for anything with side effects.
-6. **A group member cannot opt out of AI** when that group's admins enabled it (they can leave the group).
-7. The rate limiter fails open if its Durable Object is down.
-8. Token counts are estimates when a model does not report usage (they are marked as such), so quotas are approximate.
-9. **No independent security review or penetration test** has been done. The automated tests (docs/testing.md) are good at regressions, not at finding what nobody thought of.
-10. Not verified on real infrastructure: the Workers AI call path, the Cloudflare deployment, Google Drive, a real Android device, and a real filtered network (docs/testing.md has the full list).
+2. **No two-factor authentication, no email, no password reset, no self-service account deletion.** A forgotten password means a lost account.
+3. **No in-app moderation.** No admin route or screen disables, suspends or deletes an account, and the application administrator cannot read or remove content in other people's chats. `users.disabled_at` is honoured everywhere (see Sessions) but can only be set by editing the database directly. From `apps/api`: `npx wrangler d1 execute amin-chat-db --remote --command "UPDATE users SET disabled_at = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE username = 'someone' AND kind = 'human'"` (set it back to `NULL` to re-enable). The SQL was run on a SQLite database built from this repository's migrations; the `wrangler d1 execute --remote` call itself was never run against Cloudflare. What does exist: owners and admins of a group can delete other members' messages in that group.
+4. **The token lives in `localStorage`** in the browser, and there is **no CSP** on the web app (see above).
+5. **E2EE limits** listed above: no key verification, no forward secrecy, per-device keys, not independently audited.
+6. **Prompt injection cannot be ruled out**; the approval step is the safeguard for anything with side effects.
+7. **A group member cannot opt out of AI** when that group's admins enabled it (they can leave the group).
+8. The rate limiter fails open if its Durable Object is down.
+9. Token counts are estimates when a model does not report usage (they are marked as such), so quotas are approximate.
+10. **No independent security review or penetration test** has been done. The automated tests (docs/testing.md) are good at regressions, not at finding what nobody thought of.
+11. Not verified on real infrastructure: the Workers AI call path, the Cloudflare deployment, Google Drive, a real Android device, and a real filtered network (docs/testing.md has the full list).

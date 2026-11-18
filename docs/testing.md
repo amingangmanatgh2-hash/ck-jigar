@@ -23,9 +23,9 @@ GitHub runs the same on every push and pull request (`.github/workflows/ci.yml`:
 | Layer | Files | Tests | Runs on |
 |---|---|---|---|
 | Scripts and relay | 3 | 67 | Node's built-in test runner |
-| API (`apps/api/test`) | 13 | 234 | **real workerd** (Cloudflare's own runtime), real SQLite-backed D1, Durable Objects, R2 |
+| API (`apps/api/test`) | 13 | 237 | **real workerd** (Cloudflare's own runtime), real SQLite-backed D1, Durable Objects, R2 |
 | Web (`apps/web/test`) | 21 | 229 | jsdom (one file in plain Node for WebCrypto) |
-| **Total** | **37** | **530** | |
+| **Total** | **37** | **533** | |
 
 ## How real is "real"? The two doubles
 
@@ -38,23 +38,25 @@ The API tests do not mock the application. They run the Worker's actual code (`a
 
 Production code cannot tell: it calls `env.AI.run(...)` and `fetch` as usual. **A double proves our code handles the responses we *believe* the real service returns; it cannot prove those beliefs.** That is the single biggest caveat of this test suite; see "Not verified" below. Neither double exists in production code, which has no canned or simulated model output (`AI_NOT_CONNECTED` when the binding is missing). A unit test fails if a `@cf/` model id appears anywhere except `apps/api/src/ai/models.ts`.
 
-## API suites (234 tests on workerd)
+## API suites (237 tests on workerd)
 
 | File | Tests | What it checks |
 |---|---|---|
 | `unit.test.ts` | 39 | Pure logic: model registry, response normalisation, SSE parser, error classification, text utilities, `@AMINAI` mention detection, **the AI access policy**, the prompt-injection rule being present |
 | `ai-client.test.ts` | 25 | `AiClient` against the scripted AI double: the three response shapes, streaming, per-model tuning and retry without a rejected parameter, fallback order, cancellation, model availability and reason codes |
 | `ai-chat.test.ts` | 21 | AMIN AI conversations: isolation between users, send / stream / regenerate / edit-and-resend, idempotent `clientId`, quota and concurrency limits, files, images and voice, search over past conversations, the agents and models endpoints |
-| `agents.test.ts` | 24 | Task engine: routing, planning, step execution, retries, operation log; **approvals** (sensitive tools park the run, edit, reject, expiry, fingerprint mismatch); cancel; file and boundary cases; the prompt-injection rule in a real run |
-| `assist.test.ts` | 13 | `@AMINAI` in direct chats (permission first), in secret chats (the user selects what to share), in groups (admins control the level and who may invoke) |
+| `agents.test.ts` | 25 | Task engine: routing, planning, step execution, retries, operation log; **approvals** (sensitive tools park the run, edit, reject, expiry, fingerprint mismatch); cancel; file and boundary cases (including **which files the assistant may read for whom**: own files; a file shared in a chat only while that chat's AI level is `context`; never for an outsider); the prompt-injection rule in a real run |
+| `assist.test.ts` | 14 | `@AMINAI` in direct chats (permission first, **only the mention's and its reply's files are read**), in secret chats (the user selects what to share), in groups (admins control the level and who may invoke) |
 | `messenger.test.ts` | 14 | Direct chats, groups and roles, per-chat AI settings, secret chats, user search |
 | `connectivity.test.ts` | 15 | Idempotent sends, realtime long-poll, advertised endpoints, client address behind a relay |
-| `auth.test.ts` | 12 | Register, login, sessions, password change, rate limiting, admin role |
+| `auth.test.ts` | 13 | Register, login, sessions, password change, rate limiting, admin role, **a disabled account is rejected at once, cannot log in and is hidden** |
 | `memory.test.ts` | 11 | Memory is manageable (view, edit, delete, disable, suggestions) and **never leaks across users** |
 | `files.test.ts` | 6 | Upload validation and file access |
 | `storage.test.ts` | 34 | The cold file tier: offload from R2 to Google Drive, reading, access control, deleting, Drive connection problems, admin API, cron |
 | `drive-client.test.ts` | 11 | The Google Drive client against the fake Google |
 | `request-id.test.ts` | 9 | `X-Request-Id` on every response and its CORS exposure |
+
+**Log noise you will see.** The suites that drive the fake model (`agents`, `ai-chat`, `assist`, `memory`, `connectivity`) print lines such as `FakeAI.run … 5000: internal server error` and `The Workers runtime canceled this request because it detected that your Worker's code had hung`. The first is the double simulating a Workers AI failure on purpose. The second looks like workerd cancelling a request to the fake model that was still open when a test ended or was cancelled (our reading, not investigated further). Suites that never start a model run (`auth`, `files`, `storage`, `messenger`) print none, and every run exits 0. It was observed locally only, and it is not something production code prints.
 
 Many of these are written as attacks, not just happy paths: a second user trying to read, send, select from, cancel or attach someone else's things; a forged approval payload; a denied `@AMINAI` mention that must post nothing; over-quota and over-rate calls.
 

@@ -40,7 +40,7 @@ Everything runs in one Worker. There is no other server. Cloudflare services use
 
 1. `requestContext` gives every request a full-length `X-Request-Id` (exposed to CORS; the client uses its presence to tell the Worker's answers from a censor's page).
 2. `cors` allows the site's own origin, the Android origins, `ALLOWED_ORIGINS` and `PUBLIC_ENDPOINTS`. Never `*`.
-3. `requireAuth`: an opaque random bearer token; only its SHA-256 is stored (`sessions.token_hash`). Sessions last 30 days, can be listed and revoked, and a disabled user is rejected on the next request.
+3. `requireAuth`: an opaque random bearer token; only its SHA-256 is stored (`sessions.token_hash`). Sessions last 30 days, can be listed and revoked, and a user with `users.disabled_at` set is rejected on the next request (nothing in the app sets it today: [SECURITY.md](SECURITY.md), limitation 3).
 4. A rate limit (per user, or per IP for register/login) through the `RateLimiter` Durable Object. Limits are in `config/limits.ts`.
 5. `zod` validation of body and query (`lib/validate.ts`); unknown fields are rejected or ignored by schema, lengths are bounded by `LIMITS`.
 6. The service function, which does the **authorization** (membership, ownership, access policy). Routes never trust an id from the client without checking it belongs to the caller.

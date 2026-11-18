@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import { AMIN_AI_USER_ID } from '@aminchat/shared';
-import { api, json, registerUser, uniqueName } from './helpers';
+import { api, freshIp, json, registerUser, uniqueName } from './helpers';
 
 describe('authentication', () => {
   it('registers, returns a session and the verified AMIN AI contact is always in the chat list', async () => {
@@ -124,5 +124,27 @@ describe('authentication', () => {
     const bad = await api('OPTIONS', '/api/health', { headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'GET' } });
     expect(bad.status).toBe(403);
     expect(bad.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+
+  // No route or screen sets users.disabled_at (docs/SECURITY.md says so): an operator edits the database. What the app does promise is
+  // that the flag is honoured everywhere, immediately, so this pins that promise.
+  it('rejects a disabled account on its very next request, refuses its login and hides it from other people', async () => {
+    const victim = await registerUser('disabled');
+    const seeker = await registerUser('seeker');
+    expect((await api('GET', '/api/auth/me', { token: victim.token })).status).toBe(200);
+    const before = await json(await api('GET', `/api/users/search?q=${victim.username}`, { token: seeker.token }));
+    expect(before.users.map((u: any) => u.id)).toContain(victim.id);
+
+    await env.DB.prepare('UPDATE users SET disabled_at = ? WHERE id = ?').bind(Date.now(), victim.id).run();
+
+    expect((await api('GET', '/api/auth/me', { token: victim.token })).status).toBe(401);
+    const login = await api('POST', '/api/auth/login', { headers: { 'CF-Connecting-IP': freshIp() }, json: { username: victim.username, password: 'correct-horse-battery' } });
+    expect(login.status).toBe(401);
+    expect((await json(login)).error.code).toBe('INVALID_CREDENTIALS');
+    const after = await json(await api('GET', `/api/users/search?q=${victim.username}`, { token: seeker.token }));
+    expect(after.users.map((u: any) => u.id)).not.toContain(victim.id);
+    const profile = await api('GET', `/api/users/${victim.id}`, { token: seeker.token });
+    expect(profile.status).toBe(404);
+    expect((await json(profile)).error.code).toBe('USER_NOT_FOUND');
   });
 });
