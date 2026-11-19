@@ -1,0 +1,33 @@
+node_modules/
+dist/
+build/
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+coverage/
+.vite/
+# Capacitor / Android build outputs
+apps/web/android/.gradle/
+apps/web/android/build/
+apps/web/android/app/build/
+apps/web/android/local.properties
+apps/web/android/app/src/main/assets/public/
+apps/web/android/app/src/main/assets/capacitor.config.json
+apps/web/android/app/src/main/assets/capacitor.plugins.json
+apps/web/android/capacitor-cordova-android-plugins/
+*.apk
+*.aab
+# Signing keys are never committed (docs/android.md)
+*.keystore
+*.jks
+keystore.b64
+.idea/
+.vscode/
+
+apps/api/.wrangler.dev-offline.jsonc

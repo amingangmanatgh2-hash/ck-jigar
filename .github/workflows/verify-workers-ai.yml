@@ -1,0 +1,57 @@
+# Manual: checks the REAL Cloudflare Workers AI connection with the exact models and parameters AMIN CHAT uses
+# (the same check as `npm run verify:ai`), using YOUR account. A few neurons of the free daily allowance are spent.
+#
+# One-time setup (Settings > Secrets and variables > Actions > New repository secret):
+#   CLOUDFLARE_ACCOUNT_ID  your account id (dashboard > Workers & Pages > Account Details > copy button)
+#   CLOUDFLARE_API_TOKEN   a token with BOTH "Workers AI: Read" and "Workers AI: Edit" (Cloudflare's REST API guide: either the template from
+#                          dashboard > Workers AI > Use REST API > Create a Workers AI API Token, or a custom token with those two rows).
+#                          If you already made the deploy token, edit it (Workers AI: Read + Edit added): editing keeps the same secret.
+name: Verify Workers AI
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'Only models whose id contains this text (empty = all), e.g. gemma'
+        required: false
+        default: ''
+      skip_media:
+        description: 'Skip speech-to-text and image models'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Call every model the app depends on
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ONLY: ${{ inputs.only }}
+          SKIP_MEDIA: ${{ inputs.skip_media }}
+        run: |
+          ARGS=""
+          if [ -n "$ONLY" ]; then ARGS="$ARGS --only $ONLY"; fi
+          if [ "$SKIP_MEDIA" = "true" ]; then ARGS="$ARGS --skip-media"; fi
+          set -o pipefail
+          node scripts/verify-workers-ai.mjs $ARGS | tee verify.log
+      - name: Result in the run summary
+        if: always()
+        run: |
+          {
+            echo '### Workers AI check'
+            echo '```'
+            cat verify.log 2>/dev/null || echo 'no output (were the two secrets set?)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

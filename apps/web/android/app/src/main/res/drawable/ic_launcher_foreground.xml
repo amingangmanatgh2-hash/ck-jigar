@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The sparkle of apps/web/public/favicon.svg, centred and sized to stay inside the 66dp area every launcher mask keeps. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+  <path android:fillColor="#FFFFFF"
+      android:pathData="M54,34l5.25,14.75L74,54l-14.75,5.25L54,74l-5.25,-14.75L34,54l14.75,-5.25z" />
+</vector>
