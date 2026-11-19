@@ -22,10 +22,10 @@ GitHub runs the same on every push and pull request (`.github/workflows/ci.yml`:
 
 | Layer | Files | Tests | Runs on |
 |---|---|---|---|
-| Scripts and relay | 3 | 67 | Node's built-in test runner |
+| Scripts and relay | 3 | 73 | Node's built-in test runner |
 | API (`apps/api/test`) | 13 | 237 | **real workerd** (Cloudflare's own runtime), real SQLite-backed D1, Durable Objects, R2 |
 | Web (`apps/web/test`) | 21 | 229 | jsdom (one file in plain Node for WebCrypto) |
-| **Total** | **37** | **533** | |
+| **Total** | **37** | **539** | |
 
 ## How real is "real"? The two doubles
 
@@ -73,9 +73,9 @@ Many of these are written as attacks, not just happy paths: a second user trying
 | `locales.test.ts` | 8 | Persian has exactly English's keys and placeholders, is really Persian, every error code the API can send has a text in both languages, `dir` and `lang` switch correctly |
 | `e2ee.test.ts`, `session.test.tsx`, `text.test.tsx`, `useStickToBottom.test.tsx` | 7, 6, 6, 5 | WebCrypto round-trips, session handling, text helpers, scroll behaviour |
 
-## Scripts and relay (67 tests)
+## Scripts and relay (73 tests)
 
-`relay/relay.test.mjs` (44: HTTP, WebSocket and direct-HTTPS forwarding, header handling, limits, configuration errors), `scripts/deploy.test.mjs` (16: the migrate-before/after-deploy decision and dry-run), `scripts/drive-token.test.mjs` (7).
+`relay/relay.test.mjs` (44: HTTP, WebSocket and direct-HTTPS forwarding, header handling, limits, configuration errors), `scripts/deploy.test.mjs` (22: the migrate-before/after-deploy decision, dry-run, and the check that `ADMIN_USERNAMES` names somebody who can really register — including a test that the list of reserved names and the username pattern still match `packages/shared/src/constants.ts`), `scripts/drive-token.test.mjs` (7).
 
 ## Checked by hand in a real browser (not automated in the repository)
 

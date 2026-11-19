@@ -2,10 +2,11 @@
 # address of the live service at the top of the run page.
 #
 # One-time setup (Settings > Secrets and variables > Actions > New repository secret):
-#   CLOUDFLARE_ACCOUNT_ID   your account id (dashboard > Workers & Pages > right-hand side)
-#   CLOUDFLARE_API_TOKEN    My Profile > API Tokens > Create Token > template "Edit Cloudflare Workers"
-#                           (if the run complains about D1 or R2 permissions, add "D1: Edit" and "Workers R2 Storage: Edit")
-# Also, once: open Workers & Pages in the Cloudflare dashboard so your account has a workers.dev address (it asks you to pick one).
+#   CLOUDFLARE_ACCOUNT_ID   your account id (dashboard > Workers & Pages > Account Details > copy button)
+#   CLOUDFLARE_API_TOKEN    My Profile > API Tokens > Create Token > template "Edit Cloudflare Workers" (it has Workers Scripts,
+#                           Workers R2 Storage and Account Settings but NOT D1), then add one more row: Account > D1 > Edit
+# Also, once: open Workers & Pages in the Cloudflare dashboard so your account has a workers.dev address (it asks you to pick one),
+# subscribe to R2 (Storage & databases > R2 > Overview > checkout; free monthly allowance) and be on the Workers Paid plan.
 # Before the first run, put your own username in "ADMIN_USERNAMES" in apps/api/wrangler.jsonc, and register it as soon as the
 # service is up (docs/deploy.md).
 #
@@ -41,10 +42,10 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Show the plan (also stops here when ADMIN_USERNAMES names somebody who can never register)
+        run: npm run deploy -- --dry-run
       - name: Tests first (nothing is published when one fails)
         run: npm test
-      - name: Show the plan
-        run: npm run deploy -- --dry-run
       - name: Deploy (build, then migrate and publish in the safe order)
         id: deploy
         env:
@@ -63,7 +64,7 @@ jobs:
             if [ -n "$URL" ]; then
               echo "## AMIN CHAT is live: $URL"
               echo
-              echo "Open it, register the username you put in ADMIN_USERNAMES (that account becomes the administrator), then check Settings > AI models."
+              echo "Open it, register the username you put in ADMIN_USERNAMES (that account becomes the administrator), then open Models & usage (in Persian: مدل‌ها و مصرف) and press Check availability (بررسی دسترس‌پذیری); until a model passes that check it is never shown as ready."
             else
               echo "## Deployed"
               echo

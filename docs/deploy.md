@@ -11,7 +11,7 @@
 | **ب) از رایانهٔ خودتان** | اگر Node.js دارید | `npx wrangler login` و `npm run deploy` |
 
 > **راستی‌آزمایی:** همهٔ منطق برنامه با آزمون خودکار و Worker محلی (workerd) آزمایش شده، ولی **من به حساب Cloudflare دسترسی نداشتم**؛ پس هیچ‌کدام از مراحل زیر روی Cloudflare واقعی اجرا نشده‌اند و هیچ فراخوانی Workers AI واقعی هم انجام نشده است.
-> چیزهایی که **خوانده و آزمایش شده‌اند**: منطق ترتیب مراحل (۱۶ آزمون)، اجرای `npm run deploy` با wrangler واقعی که بدون اتصال امن شکست می‌خورد و هیچ‌چیز نمی‌سازد، و رفتار ساخت منابع در **کد منبع** wrangler همین نسخه (۴٫۱۶۲٫۰).
+> چیزهایی که **خوانده و آزمایش شده‌اند**: منطق ترتیب مراحل و بررسی نام مدیر (۲۲ آزمون)، اجرای `npm run deploy` با wrangler واقعی که بدون اتصال امن شکست می‌خورد و هیچ‌چیز نمی‌سازد، و رفتار ساخت منابع در **کد منبع** wrangler همین نسخه (۴٫۱۶۲٫۰).
 > چیزی که **اجرا نشده**: خودِ ساخت D1/R2 و انتشار روی Cloudflare. بعد از deploy بخش «[بررسی](#بررسی-پس-از-راه‌اندازی)» را حتماً انجام دهید.
 
 ## پیش‌نیازها (برای هر دو راه)
@@ -19,9 +19,10 @@
 | | |
 |---|---|
 | حساب Cloudflare | با **روش پرداخت ثبت‌شده** |
-| **Workers Paid** (۵ دلار در ماه) | **لازم است.** پلن رایگان فقط **۱۰ میلی‌ثانیه CPU برای هر درخواست** دارد؛ ورود/ثبت‌نام این برنامه با PBKDF2 (۱۰۰٬۰۰۰ تکرار، بیشینهٔ مجاز Workers) از آن بیشتر CPU می‌خواهد و خطای ۱۱۰۲ می‌دهد. (طبق مستندات Cloudflare، نوامبر ۲۰۲۶. زمان CPU واقعی را من نتوانستم روی Cloudflare اندازه بگیرم؛ قسمت بررسی را ببینید.) منوی Workers & Pages ← Plans |
+| **Workers Paid** (۵ دلار در ماه) | **لازم است.** پلن رایگان فقط **۱۰ میلی‌ثانیه CPU برای هر درخواست** دارد؛ ورود/ثبت‌نام این برنامه با PBKDF2 (۱۰۰٬۰۰۰ تکرار، بیشینهٔ مجاز Workers) از آن بیشتر CPU می‌خواهد و خطای ۱۱۰۲ می‌دهد. (طبق مستندات Cloudflare، نوامبر ۲۰۲۶. زمان CPU واقعی را من نتوانستم روی Cloudflare اندازه بگیرم؛ قسمت بررسی را ببینید.) داشبورد ← Workers & Pages ← Plans ← Upgrade ([لینک مستقیم](https://dash.cloudflare.com/?to=/:account/workers/plans)) |
+| اشتراک **R2** | **یک بار:** داشبورد ← Storage & databases ← R2 ← Overview ← مراحل خرید (checkout) اشتراک R2 را کامل کنید ([لینک مستقیم](https://dash.cloudflare.com/?to=/:account/r2/overview)). R2 تا سقف ماهانهٔ رایگان هزینه‌ای ندارد، ولی طبق مستندات Cloudflare برای ساخت سطل باید اشتراک داشته باشید (ممکن است روش پرداخت بخواهد)؛ بدون آن ساخت سطلِ اولین deploy احتمالاً شکست می‌خورد. (پیام خطای دقیق را من ندیده‌ام.) |
 | نشانی `workers.dev` | **یک بار** داشبورد Cloudflare ← Workers & Pages را باز کنید؛ اگر حسابتان هنوز زیردامنه ندارد از شما می‌خواهد یکی انتخاب کنید. بدون آن، deploy خودکار شکست می‌خورد |
-| نام مدیر | در `apps/api/wrangler.jsonc` مقدار `ADMIN_USERNAMES` را **نام کاربری دلخواه خودتان** بگذارید (بخش «تنظیمات» پایین). **بلافاصله بعد از deploy با همان نام ثبت‌نام کنید**؛ هر کس زودتر با آن نام ثبت‌نام کند مدیر می‌شود |
+| نام مدیر | در `apps/api/wrangler.jsonc` مقدار `ADMIN_USERNAMES` را **نام کاربری دلخواه خودتان** بگذارید (بخش «تنظیمات» پایین). نام باید با حرف انگلیسی شروع شود، ۳ تا ۳۲ حرف انگلیسی، عدد یا `_` باشد و رزرو نباشد (`admin`، `administrator`، `root`، `system`، `support`، `moderator`، `ai`، `bot`، `aminai`، `amin_ai`، `amin-ai`، `aminchat`، `amin_chat`)؛ نامی که کسی نتواند ثبت کند، deploy را با پیام روشن متوقف می‌کند. **بلافاصله بعد از deploy با همان نام ثبت‌نام کنید**؛ هر کس زودتر با آن نام ثبت‌نام کند مدیر می‌شود (اگر مخزن عمومی است، این نام و آدرس سرویس برای همه دیدنی است؛ پس معطل نکنید) |
 
 هزینهٔ Workers AI: ۱۰٬۰۰۰ نورون در روز **رایگان** است و بعد از آن ۰٫۰۱۱ دلار برای هر هزار نورون. برای اینکه یک کاربر نتواند هزینه بسازد، هر کاربر سهمیهٔ خودش را دارد (پیش‌فرض: ۳۰۰٬۰۰۰ توکن در روز، ۴۰۰ درخواست در روز، ۴٬۰۰۰٬۰۰۰ توکن در ماه؛ قابل تغییر با `DEFAULT_*` یا برای هر کاربر با `PUT /api/admin/users/:id/quota`). بعضی مدل‌های Workers AI به پلن پولی یا اعتبار AI Gateway نیاز دارند؛ مدلی که دسترس‌پذیر نباشد در برنامه «آمادهٔ استفاده» نشان داده **نمی‌شود**.
 
@@ -29,14 +30,14 @@
 
 ۱. **کد باید در شاخهٔ پیش‌فرض (`Main`) باشد.** GitHub دکمهٔ «Run workflow» را فقط برای workflowهایی نشان می‌دهد که در شاخهٔ پیش‌فرض هستند؛ پس اول Pull Request این کار را Merge کنید.
 
-۲. **شناسهٔ حساب:** داشبورد Cloudflare ← Workers & Pages ← ستون سمت راست ← «Account ID» را کپی کنید.
+۲. **شناسهٔ حساب:** داشبورد Cloudflare ← Workers & Pages ← بخش «Account Details» ← دکمهٔ کپی کنار «Account ID». (یا Ctrl+K را بزنید و Copy account ID را تایپ کنید.)
 
-۳. **توکن API:** [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) ← Create Token ← قالب **Edit Cloudflare Workers**. حساب را به همان حساب خودتان محدود کنید. اگر هنگام اجرا از دسترسی D1 یا R2 شکایت کرد، دو دسترسی **D1: Edit** و **Workers R2 Storage: Edit** را هم اضافه کنید (من محتوای دقیق قالب را نتوانستم ببینم).
+۳. **توکن API:** [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) ← Create Token ← قالب **Edit Cloudflare Workers** ← Use template. این قالب (طبق فهرست رسمی Cloudflare) دسترسی‌های Workers Scripts، Workers R2 Storage و Account Settings را دارد ولی **D1 را ندارد**؛ پس یک ردیف دسترسی دیگر اضافه کنید (دکمهٔ «+ Add more»): Account ← **D1** ← **Edit**. در «Account Resources» همان حساب خودتان را انتخاب کنید ← Continue to summary ← Create Token. مقدار توکن **فقط یک بار** نشان داده می‌شود؛ همان لحظه کپی کنید.
 
 ۴. در GitHub: مخزن ← Settings ← Secrets and variables ← Actions ← New repository secret، دو مورد:
    `CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN`. (توکن را هرگز در خود مخزن یا چت ننویسید.)
 
-۵. فایل `apps/api/wrangler.jsonc` را در GitHub باز کنید (آیکن مداد) و `"ADMIN_USERNAMES": "نام-شما"` را بگذارید و Commit کنید.
+۵. فایل `apps/api/wrangler.jsonc` را در GitHub باز کنید (آیکن مداد) و خطِ `"ADMIN_USERNAMES": ""` را پیدا کنید؛ نام را **بین دو نقل‌قولِ خالی** بگذارید، مثلاً `"ADMIN_USERNAMES": "my_boss_2027"` (حروف انگلیسی، عدد و `_`؛ رزروها مجاز نیستند) و Commit کنید.
 
 ۶. Actions ← **Deploy to Cloudflare** ← Run workflow. حدود ۵ تا ۸ دقیقه طول می‌کشد: آزمون‌ها، ساخت، سپس deploy. اگر آزمونی شکست بخورد **چیزی منتشر نمی‌شود**.
 
@@ -136,13 +137,14 @@ npm run dev:web            # Vite روی ‎:5173، /api را به Worker محل
 |---|---|
 | «Could not ask Cloudflare which databases exist» | توکن غلط/منقضی است، `CLOUDFLARE_ACCOUNT_ID` نیست، یا توکن دسترسی D1 ندارد (قالب Edit Cloudflare Workers + **D1: Edit**). هیچ‌چیز ساخته یا منتشر نشده است |
 | خطای ثبت زیردامنهٔ workers.dev هنگام deploy | یک بار داشبورد ← Workers & Pages را باز کنید و یک زیردامنه انتخاب کنید |
-| خطای دسترسی R2 | R2 باید در حساب فعال باشد (داشبورد ← R2 ← Enable؛ ممکن است روش پرداخت بخواهد) و توکن **Workers R2 Storage: Edit** داشته باشد |
+| خطای دسترسی R2 / «enable R2» | اشتراک R2 باید در حساب فعال باشد (داشبورد ← Storage & databases ← R2 ← Overview ← مراحل خرید؛ ممکن است روش پرداخت بخواهد) و توکن **Workers R2 Storage: Edit** داشته باشد (قالب Edit Cloudflare Workers دارد) |
 | خطای ۱۱۰۲ / «Worker exceeded resource limits» | پلن رایگان؛ به Workers Paid بروید |
 | خطای ۱۰۲۷ | سقف ۱۰۰٬۰۰۰ درخواست در روز در پلن رایگان |
 | `AI_NOT_CONNECTED` | بایندینگ `AI` نیست (حالت offline، یا wrangler.jsonc دست‌کاری شده) |
 | مدل «در دسترس نیست» با دلیل `check_failed` یا `unverified` | یک مدل خطا داده (۲۰ دقیقه کنار می‌رود) یا هنوز بررسی نشده؛ دکمهٔ بررسی را بزنید. اگر همیشه شکست می‌خورد، به `npm run verify:ai` نگاه کنید |
 | ورود از مرورگر دیگر ← خطای CORS | آدرس آن را به `ALLOWED_ORIGINS` بیفزایید |
 | مدیر نیستم | نام کاربری را به `ADMIN_USERNAMES` بیفزایید، دوباره deploy کنید و **خارج و دوباره وارد شوید** (ارتقا هنگام ورود انجام می‌شود) |
+| «nobody can register that» در لاگ deploy | `ADMIN_USERNAMES` نامی دارد که کسی نمی‌تواند ثبت کند (رزرو یا قالب نادرست)؛ اصلاحش کنید. هیچ‌چیز ساخته یا منتشر نشده است |
 | دکمهٔ «Run workflow» نیست | workflow در شاخهٔ پیش‌فرض نیست؛ Pull Request را Merge کنید |
 
 </div>

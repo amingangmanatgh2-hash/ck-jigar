@@ -2,7 +2,7 @@
 # (the same check as `npm run verify:ai`), using YOUR account. A few neurons of the free daily allowance are spent.
 #
 # One-time setup (Settings > Secrets and variables > Actions > New repository secret):
-#   CLOUDFLARE_ACCOUNT_ID  your account id (dashboard > Workers & Pages > right-hand side)
+#   CLOUDFLARE_ACCOUNT_ID  your account id (dashboard > Workers & Pages > Account Details > copy button)
 #   CLOUDFLARE_API_TOKEN   a token with "Workers AI: Read" (My Profile > API Tokens > Create Token > "Workers AI" template)
 name: Verify Workers AI
 

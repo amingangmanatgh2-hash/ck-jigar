@@ -67,6 +67,26 @@ export function planDeploy(configText, { databaseExists } = {}) {
   return { order: 'undecided', why: `the order is chosen when this runs: migrations first if the database "${DB_NAME}" already exists in your Cloudflare account, otherwise (first deployment) the Worker first, because Wrangler creates the database while deploying` };
 }
 
+/**
+ * Mirror of RESERVED_USERNAMES and USERNAME_REGEX in packages/shared/src/constants.ts (the server's registration rules).
+ * This script is plain JavaScript and must not import TypeScript, so deploy.test.mjs fails if the two ever drift apart.
+ */
+export const RESERVED_USERNAMES = ['aminai', 'amin_ai', 'amin-ai', 'aminchat', 'amin_chat', 'admin', 'administrator', 'root', 'system', 'support', 'moderator', 'ai', 'bot'];
+export const USERNAME_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]{2,31}$/;
+
+/**
+ * Who becomes administrator is decided by ADMIN_USERNAMES (apps/api/wrangler.jsonc): whoever REGISTERS one of those names. A name that
+ * nobody can register (reserved, or not 3 to 32 letters/digits/underscores starting with a letter) can never work, and nothing would
+ * tell you afterwards: the service runs, it just has no administrator. Returns null when the config has no such setting.
+ */
+export function checkAdminUsernames(configText) {
+  const raw = parseJsonc(configText).vars?.ADMIN_USERNAMES;
+  if (raw === undefined) return null;
+  const names = (typeof raw === 'string' ? raw : '').split(',').map((n) => n.trim()).filter(Boolean);
+  const usable = (n) => USERNAME_PATTERN.test(n) && !RESERVED_USERNAMES.includes(n.toLowerCase());
+  return { names, usable: names.filter(usable), dead: names.filter((n) => !usable(n)) };
+}
+
 /** Names of the databases in the answer of `wrangler d1 list --json` (tolerates log lines around the JSON). Throws when it is not such an answer. */
 export function parseDatabaseNames(stdout) {
   const text = String(stdout ?? '');
@@ -90,11 +110,27 @@ export function describeFailure(...texts) {
   return line.length > 300 ? `${line.slice(0, 297)}...` : line;
 }
 
-export function main({ argv = process.argv.slice(2), run = defaultRun, capture = defaultCapture, readText = (p) => readFileSync(p, 'utf8'), log = console.log } = {}) {
+export function main({ argv = process.argv.slice(2), run = defaultRun, capture = defaultCapture, readText = (p) => readFileSync(p, 'utf8'), log = console.log, env = process.env } = {}) {
   const skipBuild = argv.includes('--skip-build');
   const dry = argv.includes('--dry-run');
   const configText = readText(`${apiDir}wrangler.jsonc`);
   let plan = planDeploy(configText);
+
+  const admins = checkAdminUsernames(configText);
+  const warn = (text) => {
+    log(`[deploy] WARNING: ${text}`);
+    if (env.GITHUB_ACTIONS === 'true') log(`::warning title=AMIN CHAT::${text}`); // shown on the run's summary page
+  };
+  if (admins && admins.names.length > 0 && admins.usable.length === 0) {
+    log(`[deploy] ADMIN_USERNAMES in apps/api/wrangler.jsonc is ${admins.names.map((n) => `"${n}"`).join(', ')}, and nobody can register ${admins.names.length > 1 ? 'any of these' : 'that'}: a name must be 3 to 32 letters, digits or _, start with a letter, and not be a reserved one (${RESERVED_USERNAMES.join(', ')}). The service would run but have no administrator. Nothing was built or deployed.`);
+    log('[deploy] نام مدیر باید با حرف انگلیسی شروع شود، ۳ تا ۳۲ حرف انگلیسی/عدد/_ باشد و admin یا root و مانند آن نباشد. مقدار ADMIN_USERNAMES را در apps/api/wrangler.jsonc درست کنید.');
+    return 1;
+  }
+  if (admins && admins.names.length === 0) {
+    warn('ADMIN_USERNAMES in apps/api/wrangler.jsonc is empty, so nobody will be administrator (no model check, no quotas, no storage page). Put your own username there before the first deployment (docs/deploy.md).');
+  } else if (admins && admins.dead.length > 0) {
+    warn(`these ADMIN_USERNAMES entries can never be registered and do nothing: ${admins.dead.join(', ')}`);
+  }
 
   if (plan.order === 'undecided' && !dry) {
     // Ask first, before anything is built or published: a wrong guess here is the one mistake that matters.

@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { describeFailure, main, parseDatabaseNames, parseJsonc, planDeploy } from './deploy.mjs';
+import { RESERVED_USERNAMES, USERNAME_PATTERN, checkAdminUsernames, describeFailure, main, parseDatabaseNames, parseJsonc, planDeploy } from './deploy.mjs';
 
 const unpinned = `{
   // comment with "quotes" and a url http://x
   "d1_databases": [ { "binding": "DB", "database_name": "amin-chat-db", "migrations_dir": "migrations", }, ], /* block */
 }`;
 const pinned = unpinned.replace('"migrations_dir"', '"database_id": "1234-abcd", "migrations_dir"');
+
+const withAdmins = (value) => unpinned.replace('"d1_databases"', `"vars": { "ADMIN_USERNAMES": ${JSON.stringify(value)} }, "d1_databases"`);
 
 const LIST_CMD = 'npx wrangler d1 list --json';
 const BUILD = 'npm run build -w @aminchat/web';
@@ -17,11 +19,12 @@ const MIGRATE = 'npx wrangler d1 migrations apply amin-chat-db --remote';
 const listing = (...names) => JSON.stringify(names.map((name, i) => ({ uuid: `uuid-${i}`, name, created_at: '2026-11-01T00:00:00Z', version: 'production', num_tables: 3 })), null, 2);
 
 /** Runs main() against fakes and returns what happened, in order. */
-function drive({ argv = [], config = unpinned, answer = { status: 0, stdout: listing(), stderr: '' }, exitCodes = {} } = {}) {
+function drive({ argv = [], config = unpinned, answer = { status: 0, stdout: listing(), stderr: '' }, exitCodes = {}, env = {} } = {}) {
   const events = [];
   const logs = [];
   const code = main({
     argv,
+    env,
     readText: () => config,
     log: (m) => logs.push(m),
     capture: (cmd, args) => {
@@ -141,4 +144,64 @@ test('describeFailure shows the line that explains the problem, without terminal
   assert.equal(describeFailure('', 'only a plain line'), 'only a plain line');
   assert.equal(describeFailure('', ''), '');
   assert.ok(describeFailure('x'.repeat(1000)).length <= 300);
+});
+
+test('checkAdminUsernames: who can ever become administrator', () => {
+  const check = (value) => checkAdminUsernames(withAdmins(value));
+  assert.deepEqual(check('my_boss'), { names: ['my_boss'], usable: ['my_boss'], dead: [] });
+  assert.deepEqual(check(' My_Boss , other_one ,'), { names: ['My_Boss', 'other_one'], usable: ['My_Boss', 'other_one'], dead: [] });
+  assert.deepEqual(check('a'.repeat(32)).usable, ['a'.repeat(32)], '32 characters is the longest username');
+  assert.deepEqual(check(''), { names: [], usable: [], dead: [] });
+  // reserved names (any case) and malformed ones can never be registered
+  for (const bad of ['admin', 'Root', 'AMINAI', 'aminchat', 'ab', '1abc', 'has-dash', 'with space', '\u0646\u0627\u0645', 'a'.repeat(33)]) {
+    const r = check(bad);
+    assert.deepEqual(r.usable, [], `${bad} must not count as a usable administrator name`);
+    assert.deepEqual(r.dead, [bad]);
+  }
+  assert.deepEqual(check('admin, my_boss'), { names: ['admin', 'my_boss'], usable: ['my_boss'], dead: ['admin'] });
+});
+
+test('checkAdminUsernames: a config without the setting is left alone', () => {
+  assert.equal(checkAdminUsernames(unpinned), null);
+  assert.equal(checkAdminUsernames('{"vars": {}}'), null);
+});
+
+test('the reserved names and the username pattern here are the server’s (packages/shared/src/constants.ts)', () => {
+  const text = readFileSync(new URL('../packages/shared/src/constants.ts', import.meta.url), 'utf8');
+  const list = /RESERVED_USERNAMES = \[([\s\S]*?)\];/.exec(text);
+  assert.ok(list, 'RESERVED_USERNAMES not found in constants.ts');
+  assert.deepEqual([...list[1].matchAll(/'([^']+)'/g)].map((m) => m[1]), RESERVED_USERNAMES);
+  const pattern = /USERNAME_REGEX = \/(.+)\/;/.exec(text);
+  assert.ok(pattern, 'USERNAME_REGEX not found in constants.ts');
+  assert.equal(USERNAME_PATTERN.source, pattern[1]);
+});
+
+test('the committed wrangler.jsonc does not name an administrator that nobody can register', () => {
+  const r = checkAdminUsernames(readFileSync(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8'));
+  assert.ok(r, 'ADMIN_USERNAMES must stay in apps/api/wrangler.jsonc (an empty value is allowed)');
+  assert.deepEqual(r.dead, [], `ADMIN_USERNAMES has names nobody can register: ${r.dead.join(', ')}`);
+});
+
+test('an ADMIN_USERNAMES that nobody can register stops everything before Cloudflare is even asked', () => {
+  const r = drive({ config: withAdmins('admin') });
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.events, [], 'nothing asked, nothing built, nothing deployed');
+  assert.match(r.logs, /ADMIN_USERNAMES in apps\/api\/wrangler\.jsonc is "admin", and nobody can register that/);
+  assert.match(r.logs, /Nothing was built or deployed/);
+  assert.match(r.logs, /\u0646\u0627\u0645 \u0645\u062f\u06cc\u0631/, 'a Persian explanation too');
+  assert.equal(drive({ config: withAdmins('root, Support'), argv: ['--dry-run'] }).code, 1, 'also on the dry run that the workflow shows first');
+});
+
+test('an empty ADMIN_USERNAMES only warns (and becomes an annotation on GitHub); a usable name is silent', () => {
+  const empty = drive({ config: withAdmins('') });
+  assert.equal(empty.code, 0);
+  assert.match(empty.logs, /WARNING: ADMIN_USERNAMES in apps\/api\/wrangler\.jsonc is empty/);
+  assert.doesNotMatch(empty.logs, /::warning/);
+  assert.match(drive({ config: withAdmins(''), env: { GITHUB_ACTIONS: 'true' } }).logs, /::warning title=AMIN CHAT::ADMIN_USERNAMES in apps\/api\/wrangler\.jsonc is empty/);
+  const good = drive({ config: withAdmins('my_boss'), env: { GITHUB_ACTIONS: 'true' } });
+  assert.equal(good.code, 0);
+  assert.doesNotMatch(good.logs, /WARNING|::warning/);
+  const mixed = drive({ config: withAdmins('admin, my_boss') });
+  assert.equal(mixed.code, 0, 'one usable name is enough to deploy');
+  assert.match(mixed.logs, /WARNING: these ADMIN_USERNAMES entries can never be registered and do nothing: admin/);
 });
