@@ -3,7 +3,9 @@
 #
 # One-time setup (Settings > Secrets and variables > Actions > New repository secret):
 #   CLOUDFLARE_ACCOUNT_ID  your account id (dashboard > Workers & Pages > Account Details > copy button)
-#   CLOUDFLARE_API_TOKEN   a token with "Workers AI: Read" (My Profile > API Tokens > Create Token > "Workers AI" template)
+#   CLOUDFLARE_API_TOKEN   a token with BOTH "Workers AI: Read" and "Workers AI: Edit" (Cloudflare's REST API guide: either the template from
+#                          dashboard > Workers AI > Use REST API > Create a Workers AI API Token, or a custom token with those two rows).
+#                          If you already made the deploy token, edit it (Workers AI: Read + Edit added): editing keeps the same secret.
 name: Verify Workers AI
 
 on:
