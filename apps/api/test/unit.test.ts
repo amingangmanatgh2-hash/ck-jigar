@@ -7,7 +7,7 @@ import { classifyAiError } from '../src/ai/errors';
 import { SseParser } from '../src/lib/sse';
 import { buildFtsQuery, estimateTokens, extractJson, normalizeForSearch, stripThinking } from '../src/lib/text';
 import { newId } from '../src/lib/ids';
-import { hashPassword, verifyPassword } from '../src/lib/crypto';
+import { hashPassword, passwordIterations, storedIterations, verifyPassword } from '../src/lib/crypto';
 import { AGENTS } from '../src/agents/registry';
 import { UNTRUSTED_CONTENT_RULE, assistSystemPrompt, systemPrompt } from '../src/agents/prompts';
 
@@ -144,6 +144,26 @@ describe('text utilities', () => {
     expect(await verifyPassword('secret-password', h1)).toBe(true);
     expect(await verifyPassword('wrong-password', h1)).toBe(false);
     expect(await verifyPassword('anything', null)).toBe(false);
+  });
+
+  it('passwordIterations: the setting is kept within 10 000 .. 100 000, and only a plain whole number counts', () => {
+    const of = (v?: string) => passwordIterations(v === undefined ? {} : { PASSWORD_HASH_ITERATIONS: v });
+    expect(of()).toBe(100_000);
+    expect(of('')).toBe(100_000);
+    expect(of('20000')).toBe(20_000);
+    expect(of(' 20000 ')).toBe(20_000);
+    expect(of('10000')).toBe(10_000);
+    expect(of('5')).toBe(10_000); // too low: raised to the floor
+    expect(of('600000')).toBe(100_000); // Workers refuses more than 100000: capped
+    for (const junk of ['abc', '2e4', '-5', '20000.5', '0x4e20', '20 000', '1234567890123']) expect(of(junk), junk).toBe(100_000);
+  });
+
+  it('storedIterations reads the cost recorded in a hash, and only in hashes of this format', async () => {
+    expect(storedIterations(await hashPassword('some-password', 12_345))).toBe(12_345);
+    expect(storedIterations(null)).toBeNull();
+    expect(storedIterations('plain')).toBeNull();
+    expect(storedIterations('bcrypt$12$a$b')).toBeNull();
+    expect(storedIterations('pbkdf2-sha256$abc$a$b')).toBeNull();
   });
 });
 

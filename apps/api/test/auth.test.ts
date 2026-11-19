@@ -1,6 +1,8 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import { AMIN_AI_USER_ID } from '@aminchat/shared';
+import { storedIterations } from '../src/lib/crypto';
+import { login, register } from '../src/services/users';
 import { api, freshIp, json, registerUser, uniqueName } from './helpers';
 
 describe('authentication', () => {
@@ -21,7 +23,7 @@ describe('authentication', () => {
   it('never stores passwords or bearer tokens in clear text', async () => {
     const u = await registerUser('hash');
     const row = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?').bind(u.id).first<{ password_hash: string }>();
-    expect(row!.password_hash.startsWith('pbkdf2-sha256$100000$')).toBe(true);
+    expect(row!.password_hash.startsWith('pbkdf2-sha256$20000$')).toBe(true); // the test environment's PASSWORD_HASH_ITERATIONS
     expect(row!.password_hash).not.toContain('correct-horse');
     const sessions = await env.DB.prepare('SELECT token_hash FROM sessions WHERE user_id = ?').bind(u.id).all<{ token_hash: string }>();
     expect(sessions.results.every((s) => s.token_hash !== u.token && s.token_hash.length === 64)).toBe(true);
@@ -146,5 +148,70 @@ describe('authentication', () => {
     const profile = await api('GET', `/api/users/${victim.id}`, { token: seeker.token });
     expect(profile.status).toBe(404);
     expect((await json(profile)).error.code).toBe('USER_NOT_FOUND');
+  });
+});
+
+describe('password hash cost (PASSWORD_HASH_ITERATIONS)', () => {
+  const cheap = { ...env, PASSWORD_HASH_ITERATIONS: '20000' } as typeof env;
+  const strong = { ...env, PASSWORD_HASH_ITERATIONS: '100000' } as typeof env;
+  const iterationsOf = async (id: string) =>
+    storedIterations((await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?').bind(id).first<{ password_hash: string }>())!.password_hash);
+
+  it('registration uses the configured cost and records it in the hash', async () => {
+    const a = await register(cheap, { username: uniqueName('cost'), password: 'correct-horse-battery' }, null);
+    expect(await iterationsOf(a.user.id)).toBe(20_000);
+    const b = await register(strong, { username: uniqueName('cost'), password: 'correct-horse-battery' }, null);
+    expect(await iterationsOf(b.user.id)).toBe(100_000);
+  });
+
+  it('a cheaper hash still signs in and is upgraded at that sign-in; a lower setting never weakens an existing hash', async () => {
+    const name = uniqueName('upgrade');
+    const created = await register(cheap, { username: name, password: 'correct-horse-battery' }, null);
+    // a wrong password changes nothing, even under the stronger setting
+    await expect(login(strong, name, 'wrong-password-here', null)).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+    expect(await iterationsOf(created.user.id)).toBe(20_000);
+    // the right password under the stronger setting: signed in, hash replaced
+    expect((await login(strong, name, 'correct-horse-battery', null)).user.id).toBe(created.user.id);
+    expect(await iterationsOf(created.user.id)).toBe(100_000);
+    // the setting is lowered again: still signs in, the strong hash stays
+    expect((await login(cheap, name, 'correct-horse-battery', null)).user.id).toBe(created.user.id);
+    expect(await iterationsOf(created.user.id)).toBe(100_000);
+    // and it was a real hash, not a leftover: the old and the new password behave
+    await expect(login(cheap, name, 'wrong-password-here', null)).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+  });
+
+  it('an upgrade never overwrites a password that was changed in the meantime', async () => {
+    const name = uniqueName('race');
+    const created = await register(cheap, { username: name, password: 'correct-horse-battery' }, null);
+    const before = (await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?').bind(created.user.id).first<{ password_hash: string }>())!.password_hash;
+    // the stored hash is replaced by another one between reading it and writing the upgrade: the WHERE clause must stop the write
+    const swapped = 'pbkdf2-sha256$20000$AAAAAAAAAAAAAAAAAAAAAA==$' + before.split('$')[3];
+    const racing = new Proxy(strong, {
+      get(target, prop, receiver) {
+        if (prop !== 'DB') return Reflect.get(target, prop, receiver);
+        return new Proxy(target.DB, {
+          get(db, p) {
+            if (p !== 'prepare') return (db as any)[p].bind(db);
+            return (sql: string) => {
+              if (sql.startsWith('UPDATE users SET password_hash')) {
+                // somebody changed the password just before the upgrade is written
+                return { bind: (...args: unknown[]) => ({ run: async () => { await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(swapped, created.user.id).run(); return db.prepare(sql).bind(...args).run(); } }) };
+              }
+              return db.prepare(sql);
+            };
+          },
+        });
+      },
+    }) as typeof env;
+    await login(racing, name, 'correct-horse-battery', null);
+    const after = (await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?').bind(created.user.id).first<{ password_hash: string }>())!.password_hash;
+    expect(after).toBe(swapped);
+  });
+
+  it('changing the password uses the configured cost', async () => {
+    const u = await registerUser('chcost');
+    const res = await api('POST', '/api/auth/change-password', { token: u.token, json: { currentPassword: 'correct-horse-battery', newPassword: 'another-long-password' } });
+    expect(res.status).toBe(200);
+    expect(await iterationsOf(u.id)).toBe(20_000);
   });
 });

@@ -27,6 +27,11 @@ export interface Env {
   PUBLIC_ENDPOINTS?: string;
   /** Comma-separated usernames that get the admin role. */
   ADMIN_USERNAMES?: string;
+  /**
+   * PBKDF2 iterations for NEW password hashes, 10000..100000 (default 100000). The Workers Free plan allows 10 ms of CPU per request and
+   * 100000 iterations cost about 20 ms, so a free account sets a lower number; see docs/deploy.md. Older hashes are upgraded at login.
+   */
+  PASSWORD_HASH_ITERATIONS?: string;
   DEFAULT_DAILY_TOKENS?: string;
   DEFAULT_DAILY_REQUESTS?: string;
   DEFAULT_MONTHLY_TOKENS?: string;

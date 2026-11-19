@@ -38,9 +38,30 @@ export function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
 
 /**
  * Password hashing: PBKDF2-HMAC-SHA256.
- * Cloudflare Workers caps PBKDF2 at 100,000 iterations, so that is what we use (documented in docs/SECURITY.md).
+ *
+ * Cloudflare Workers caps PBKDF2 at 100,000 iterations, which is the default here and costs about 20 ms of CPU. The Workers FREE plan
+ * allows only 10 ms of CPU per request, so there the number of iterations is lowered with the variable PASSWORD_HASH_ITERATIONS
+ * (docs/SECURITY.md, docs/deploy.md). Every hash records the iterations it was made with, so changing the setting never locks anybody
+ * out, and `login` replaces a cheaper hash with one made at the current setting the next time its owner signs in.
  */
 export const PBKDF2_ITERATIONS = 100_000;
+/** The setting is never allowed below this (a smaller number is raised to it). */
+export const PBKDF2_MIN_ITERATIONS = 10_000;
+
+/** Iterations for NEW hashes: PASSWORD_HASH_ITERATIONS limited to 10 000 .. 100 000; anything that is not a plain whole number means 100 000. */
+export function passwordIterations(env: { PASSWORD_HASH_ITERATIONS?: string }): number {
+  const raw = (env.PASSWORD_HASH_ITERATIONS ?? '').trim();
+  if (!/^\d{1,9}$/.test(raw)) return PBKDF2_ITERATIONS;
+  return Math.min(PBKDF2_ITERATIONS, Math.max(PBKDF2_MIN_ITERATIONS, Number(raw)));
+}
+
+/** The iterations a stored hash was made with; null when it is not one of ours. */
+export function storedIterations(stored: string | null): number | null {
+  const parts = (stored ?? '').split('$');
+  if (parts.length !== 4 || parts[0] !== 'pbkdf2-sha256') return null;
+  const n = Number(parts[1]);
+  return Number.isInteger(n) && n >= 1 ? n : null;
+}
 
 async function pbkdf2(password: string, salt: Uint8Array, iterations: number): Promise<Uint8Array> {
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
@@ -55,11 +76,12 @@ export async function hashPassword(password: string, iterations = PBKDF2_ITERATI
   return `pbkdf2-sha256$${iterations}$${bytesToB64(salt)}$${bytesToB64(hash)}`;
 }
 
-export async function verifyPassword(password: string, stored: string | null): Promise<boolean> {
+/** `unknownUserIterations`: the work done when there is no stored hash (unknown user), so that it costs what a real check costs. */
+export async function verifyPassword(password: string, stored: string | null, unknownUserIterations = PBKDF2_ITERATIONS): Promise<boolean> {
   // Always do the same amount of work, even for unknown users (stored === null), to avoid user enumeration by timing.
   const parts = (stored ?? '').split('$');
   const valid = parts.length === 4 && parts[0] === 'pbkdf2-sha256';
-  const iterations = valid ? Number(parts[1]) : PBKDF2_ITERATIONS;
+  const iterations = valid ? Number(parts[1]) : unknownUserIterations;
   const salt = valid ? b64ToBytes(parts[2]!) : new Uint8Array(16);
   const expected = valid ? b64ToBytes(parts[3]!) : new Uint8Array(32);
   if (!Number.isFinite(iterations) || iterations < 1 || iterations > 100_000) return false;

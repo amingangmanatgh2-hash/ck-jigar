@@ -3,7 +3,7 @@ import { LIMITS, SUPPORTED_LOCALES, type SessionDto } from '@aminchat/shared';
 import { z } from 'zod';
 import { RATE_LIMITS } from '../config/limits';
 import { all, first } from '../db/helpers';
-import { hashPassword, verifyPassword } from '../lib/crypto';
+import { hashPassword, passwordIterations, verifyPassword } from '../lib/crypto';
 import { notFound, unauthorized } from '../lib/errors';
 import { parseJson } from '../lib/validate';
 import { requireAuth, type AppEnv } from '../middleware/auth';
@@ -121,8 +121,9 @@ authRoutes.post('/change-password', async (c) => {
   const body = await parseJson(c, passwordSchema);
   await consume(c.env, 'login-user', user.username.toLowerCase(), RATE_LIMITS.loginUser);
   const row = await first<UserRow>(c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id));
-  if (!row || !(await verifyPassword(body.currentPassword, row.password_hash))) throw unauthorized('Current password is incorrect', 'INVALID_CREDENTIALS');
-  const hash = await hashPassword(body.newPassword);
+  const iterations = passwordIterations(c.env);
+  if (!row || !(await verifyPassword(body.currentPassword, row.password_hash, iterations))) throw unauthorized('Current password is incorrect', 'INVALID_CREDENTIALS');
+  const hash = await hashPassword(body.newPassword, iterations);
   await c.env.DB.batch([
     c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hash, user.id),
     // Every other device must sign in again with the new password.

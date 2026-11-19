@@ -10,6 +10,11 @@
 # Before the first run, put your own username in "ADMIN_USERNAMES" in apps/api/wrangler.jsonc, and register it as soon as the
 # service is up (docs/deploy.md).
 #
+# Two ways to start it:
+#   - Actions > Deploy to Cloudflare > Run workflow. GitHub shows that button only once this file is on the default branch (Main).
+#   - Without any button and without merging anything: a commit that changes the file deploy/REQUEST, on Main or on an arena/* branch.
+#     Line 1 of that file is "check" (the plan and the tests only; nothing is published, no secret is used) or "deploy".
+#
 # The first run creates the D1 database and the R2 bucket. Wrangler looks them up by name, so a re-run or an already existing one is
 # never duplicated. Every later run applies the migrations first and deploys the new code after. Worker secrets (RELAY_SECRET,
 # GOOGLE_*, SEARCH_*) live on Cloudflare, are set once and are not touched here.
@@ -22,6 +27,9 @@ on:
         description: 'Only if you use your own domain: its address, e.g. https://chat.example.com. The workers.dev address is checked automatically.'
         required: false
         default: ''
+  push:
+    branches: [Main, 'arena/**']
+    paths: ['deploy/REQUEST']
 
 concurrency:
   group: deploy
@@ -37,17 +45,33 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v7
+      - name: What was asked for
+        id: ask
+        run: |
+          MODE=deploy
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then MODE=$(head -n 1 deploy/REQUEST | tr -d '[:space:]'); fi
+          case "$MODE" in
+            deploy|check) ;;
+            *) echo "::error title=deploy/REQUEST::line 1 must be check or deploy (it is: $MODE)"; exit 1 ;;
+          esac
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "Mode: **$MODE**" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - name: Show the plan (also stops here when ADMIN_USERNAMES names somebody who can never register)
-        run: npm run deploy -- --dry-run
+        run: |
+          set -o pipefail
+          npm run deploy -- --dry-run 2>&1 | tee plan.log
       - name: Tests first (nothing is published when one fails)
-        run: npm test
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test.log
       - name: Deploy (build, then migrate and publish in the safe order)
         id: deploy
+        if: steps.ask.outputs.mode == 'deploy'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -56,7 +80,7 @@ jobs:
           npm run deploy 2>&1 | tee deploy.log
       - name: Address of the live service
         id: address
-        if: success()
+        if: success() && steps.ask.outputs.mode == 'deploy'
         run: |
           URL=$(sed -E 's/\x1b\[[0-9;]*m//g' deploy.log | grep -oE 'https://[A-Za-z0-9.-]+\.workers\.dev' | head -1 || true)
           echo "url=$URL" >> "$GITHUB_OUTPUT"
@@ -71,8 +95,9 @@ jobs:
               echo "Wrangler printed no workers.dev address (is workers_dev turned off or a custom domain used?). Check the log of the previous step."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$URL" ]; then echo "::notice title=AMIN CHAT is live::$URL"; fi
       - name: Check that it answers like AMIN CHAT
-        if: success() && (inputs.smoke_url != '' || steps.address.outputs.url != '')
+        if: success() && steps.ask.outputs.mode == 'deploy' && (inputs.smoke_url != '' || steps.address.outputs.url != '')
         env:
           TARGET: ${{ inputs.smoke_url || steps.address.outputs.url }}
         run: |
@@ -82,3 +107,18 @@ jobs:
             echo "not ready yet (attempt $i of 12)"; sleep 10
           done
           echo "::error::${TARGET%/}/api/health did not answer like AMIN CHAT"; exit 1
+      - name: Check passed
+        if: success() && steps.ask.outputs.mode == 'check'
+        run: |
+          echo "## Check passed: the plan is valid and every test is green. Nothing was published." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Check passed::the plan is valid and every test is green; nothing was published"
+      - name: What went wrong (the lines that matter, as annotations)
+        if: failure()
+        run: |
+          say() { # $1 = title, rest = text: one annotation, one line, percent signs escaped
+            local t="$1"; shift; local x="$*"; x="${x//'%'/'%25'}"; echo "::error title=$t::${x:-no details; open the log of the red step}"
+          }
+          clean() { sed -E 's/\x1b\[[0-9;]*m//g' "$1" 2>/dev/null; }
+          if [ -s deploy.log ]; then say "Deploy failed" "$(clean deploy.log | grep -E '✘|ERROR|Error|error|failed|nobody can register|Could not ask|WARNING' | head -n 8 | cut -c1-300 | tr '\n' '|')"; fi
+          if [ -s test.log ] && ! [ -s deploy.log ]; then say "Tests failed" "$(clean test.log | grep -E 'FAIL |not ok |AssertionError|Tests +[0-9]+ failed' | head -n 8 | cut -c1-300 | tr '\n' '|')"; fi
+          if [ -s plan.log ] && ! [ -s test.log ]; then say "The plan was refused" "$(clean plan.log | grep -E 'ADMIN_USERNAMES|nobody can register|Nothing was' | head -n 4 | cut -c1-400 | tr '\n' '|')"; fi

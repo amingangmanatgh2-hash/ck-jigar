@@ -45,7 +45,12 @@
     "ALLOWED_ORIGINS": "",
     // Usernames that become administrators when they register (comma separated). Set this to your own username
     // (not a reserved one such as "admin" or "root").
-    "ADMIN_USERNAMES": "",
+    "ADMIN_USERNAMES": "amin_ck",
+    // How many PBKDF2 rounds protect a NEW password hash. The Workers FREE plan allows 10 ms of CPU per request and the maximum,
+    // 100000 rounds, costs about 20 ms: sign-in and registration would fail with error 1102. 20000 costs about 4 ms.
+    // On the Workers Paid plan set "100000": every older hash is replaced by a stronger one at its owner's next sign-in.
+    // (docs/deploy.md, docs/SECURITY.md)
+    "PASSWORD_HASH_ITERATIONS": "20000",
     // Alternative addresses of this service (comma separated origins): relays you run, mirrors … The apps learn them from
     // GET /api/health and use them when this address is blocked; they are also trusted as CORS origins. See docs/connectivity.md.
     "PUBLIC_ENDPOINTS": ""

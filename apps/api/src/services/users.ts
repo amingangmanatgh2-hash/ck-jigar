@@ -2,7 +2,7 @@ import { RESERVED_USERNAMES, USERNAME_REGEX, type AuthResponse } from '@aminchat
 import { first, isUniqueViolation } from '../db/helpers';
 import type { Env } from '../env';
 import { SESSION_TTL_MS } from '../config/limits';
-import { hashPassword, randomToken, sha256Hex, verifyPassword } from '../lib/crypto';
+import { hashPassword, passwordIterations, randomToken, sha256Hex, storedIterations, verifyPassword } from '../lib/crypto';
 import { badRequest, conflict, unauthorized } from '../lib/errors';
 import { ID_PREFIX, newId } from '../lib/ids';
 import { userToSelfDto, type UserRow } from './dto';
@@ -48,7 +48,7 @@ export async function register(
   validateUsername(input.username);
   const id = newId(ID_PREFIX.user);
   const now = Date.now();
-  const hash = await hashPassword(input.password);
+  const hash = await hashPassword(input.password, passwordIterations(env));
   try {
     await env.DB.prepare(
       `INSERT INTO users (id, username, display_name, password_hash, kind, role, verified, locale, timezone, created_at)
@@ -68,8 +68,21 @@ export async function register(
 
 export async function login(env: Env, username: string, password: string, userAgent: string | null): Promise<AuthResponse> {
   const user = await getUserByUsername(env, username);
-  const ok = await verifyPassword(password, user?.password_hash ?? null);
+  const target = passwordIterations(env);
+  const ok = await verifyPassword(password, user?.password_hash ?? null, target);
   if (!user || !ok || user.kind !== 'human' || user.disabled_at) throw unauthorized('Invalid username or password', 'INVALID_CREDENTIALS');
+  // A hash made with fewer iterations than the current setting (the setting was raised, e.g. after moving to Workers Paid) is replaced
+  // now, while the password is at hand. Never the other way round: lowering the setting does not weaken the hashes that exist.
+  // The WHERE clause keeps a password changed in the meantime from being overwritten; a failure here never blocks the login.
+  const have = storedIterations(user.password_hash);
+  if (have !== null && have < target) {
+    try {
+      const upgraded = await hashPassword(password, target);
+      await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?').bind(upgraded, user.id, user.password_hash).run();
+    } catch (err) {
+      console.warn('password hash upgrade failed', String((err as Error)?.message ?? err));
+    }
+  }
   if (isAdminName(env, user.username) && user.role !== 'admin') {
     await env.DB.prepare(`UPDATE users SET role = 'admin' WHERE id = ?`).bind(user.id).run();
     user.role = 'admin';
