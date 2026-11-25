@@ -11,7 +11,8 @@
 # The three names must match exactly. Before anything is published a preflight asks Cloudflare and Groq whether everything is in place
 # (token, Workers, D1, R2, Groq) and lists ALL problems at once, with the fix for each; it prints no secret.
 # Also, once: open Workers & Pages in the Cloudflare dashboard so your account has a workers.dev address (it asks you to pick one),
-# subscribe to R2 (Storage & databases > R2 > Overview > checkout; free monthly allowance) and be on the Workers Paid plan.
+# subscribe to R2 (Storage & databases > R2 > Overview > checkout; free monthly allowance). The free Workers plan is enough to try it, with
+# two limits (10 ms of CPU per request, 100 000 requests a day) explained in docs/deploy.md; Workers Paid is the safer plan.
 # Before the first run, put your own username in "ADMIN_USERNAMES" in apps/api/wrangler.jsonc, and register it as soon as the
 # service is up (docs/deploy.md).
 #

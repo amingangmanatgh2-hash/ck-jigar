@@ -2,16 +2,16 @@
 
 # AMIN CHAT و AMIN AI
 
-یک پیام‌رسان (وب + اندروید) با یک دستیار هوش مصنوعی واقعی به نام **AMIN AI** که مخاطب دائمی و تأییدشدهٔ هر کاربر است و روی **Cloudflare Workers AI** کار می‌کند. همه‌چیز روی Cloudflare اجرا می‌شود: Workers، Workers AI، Durable Objects، D1 و R2؛ بدون سرور دیگر.
+یک پیام‌رسان (وب + اندروید) با یک دستیار هوش مصنوعی واقعی به نام **AMIN AI** که مخاطب دائمی و تأییدشدهٔ هر کاربر است و روی **Cloudflare Workers AI** کار می‌کند؛ **Groq** هم به‌عنوان سرویس دوم و اختیاری کنارش است (کارهای سریع را اول جواب می‌دهد و پشتیبان Workers AI است). همه‌چیز روی Cloudflare اجرا می‌شود: Workers، Workers AI، Durable Objects، D1 و R2؛ بدون سرور دیگر.
 
 ## وضعیت صادقانه (اول این را بخوانید)
 
 | | |
 |---|---|
-| ✅ ساخته و آزمایش‌شده | همهٔ بخش‌های خواستهٔ پروژه: مخاطب AMIN AI، گفتگو با پخش زنده، `@AMINAI` در چت‌ها با دسترسی مستقل برای هر چت، شش دستیار، موتور وظیفه با لاگ و لغو و تلاش دوباره، تأیید برای کارهای حساس، حافظهٔ قابل مدیریت، کنترل مدیران گروه، سهمیه و محدودیت نرخ، فارسی و انگلیسی با RTL واقعی. **۵۴۵ آزمون خودکار** (۲۴۳ آزمون API روی workerd واقعی، ۲۲۹ آزمون وب، ۷۳ آزمون اسکریپت و رله)، و CI در GitHub سبز است. |
+| ✅ ساخته و آزمایش‌شده | همهٔ بخش‌های خواستهٔ پروژه: مخاطب AMIN AI، گفتگو با پخش زنده، `@AMINAI` در چت‌ها با دسترسی مستقل برای هر چت، شش دستیار (به‌علاوهٔ «عمومی» و «سریع»؛ سریع روی Groq کار می‌کند و مثلاً چت یک نفر را برایتان آماده باز می‌کند)، موتور وظیفه با لاگ و لغو و تلاش دوباره، تأیید برای کارهای حساس، حافظهٔ قابل مدیریت، کنترل مدیران گروه، سهمیه و محدودیت نرخ، فارسی و انگلیسی با RTL واقعی. **۶۶۵ آزمون خودکار** (۳۲۰ آزمون API روی workerd واقعی، ۲۳۹ آزمون وب، ۱۰۶ آزمون اسکریپت و رله)، و CI در GitHub سبز است. |
 | ✅ APK | روی GitHub ساخته و ۱۰ بررسی محتوا رویش انجام می‌شود (workflow «Android app»). |
 | ❌ **هنوز دیپلوی واقعی نشده** | به حساب Cloudflare دسترسی نبود. دستور و workflow دیپلوی آماده‌اند ([docs/deploy.md](docs/deploy.md)) ولی هیچ‌وقت روی Cloudflare اجرا نشده‌اند؛ پس **آدرس زنده‌ای وجود ندارد**. |
-| ❌ **اتصال واقعی Workers AI آزمایش نشده** | منطق مدل‌ها با یک شبیه‌ساز آزمایش شده است، نه با مدل واقعی. بعد از دیپلوی `npm run verify:ai` را اجرا کنید ([docs/testing.md](docs/testing.md)). در برنامه هیچ پاسخ ساختگی وجود ندارد: بدون اتصال، AMIN AI صادقانه می‌گوید وصل نیست. |
+| ❌ **اتصال واقعی Workers AI و Groq آزمایش نشده** | منطق مدل‌ها با شبیه‌ساز (برای هر دو سرویس) آزمایش شده است، نه با مدل واقعی. بعد از دیپلوی `npm run verify:ai` را اجرا کنید ([docs/testing.md](docs/testing.md)). در برنامه هیچ پاسخ ساختگی وجود ندارد: بدون اتصال، AMIN AI صادقانه می‌گوید وصل نیست. |
 | ❌ آزمایش‌نشده | Google Drive واقعی، دستگاه یا WebView واقعی اندروید، شبکهٔ واقعی فیلترشدهٔ ایران. |
 | ❌ ساخته‌نشده | اعلان (Push) وقتی برنامهٔ اندروید بسته است؛ تلگرام (عمداً: فقط نقطهٔ توسعه آماده است، [docs/telegram-extension.md](docs/telegram-extension.md))؛ ورود دومرحله‌ای، بازیابی گذرواژه و حذف حساب؛ ابزار نظارت درون‌برنامه (غیرفعال‌کردن حساب فقط با ویرایش مستقیم پایگاه داده ممکن است). |
 
@@ -19,7 +19,7 @@
 
 ## راه‌اندازی روی Cloudflare
 
-دو Secret در GitHub (`CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN`)، `ADMIN_USERNAMES` در `apps/api/wrangler.jsonc`، و یک کلیک روی **Actions ← Deploy to Cloudflare ← Run workflow**. اشتراک R2 لازم است (یک بار در داشبورد Cloudflare). پلن رایگان Workers برای امتحان کافی است، با دو محدودیت که در راهنما آمده؛ Workers Paid امن‌تر است. گام‌به‌گام و عیب‌یابی: **[docs/deploy.md](docs/deploy.md)**. دکمهٔ یک‌کلیکی Cloudflare برای این مخزن کار نمی‌کند (توضیح در همان فایل). دکمهٔ «Run workflow» فقط وقتی دیده می‌شود که workflow در شاخهٔ پیش‌فرض `Main` باشد؛ بدون Merge هم می‌شود با تغییر فایل `deploy/REQUEST` شروعش کرد.
+دو Secret در GitHub (`CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN`؛ سومی `GROQ_API_KEY` اختیاری است)، `ADMIN_USERNAMES` در `apps/api/wrangler.jsonc`، و یک کلیک روی **Actions ← Deploy to Cloudflare ← Run workflow**. اشتراک R2 لازم است (یک بار در داشبورد Cloudflare). پلن رایگان Workers برای امتحان کافی است، با دو محدودیت که در راهنما آمده؛ Workers Paid امن‌تر است. گام‌به‌گام و عیب‌یابی: **[docs/deploy.md](docs/deploy.md)**. دکمهٔ یک‌کلیکی Cloudflare برای این مخزن کار نمی‌کند (توضیح در همان فایل). دکمهٔ «Run workflow» فقط وقتی دیده می‌شود که workflow در شاخهٔ پیش‌فرض `Main` باشد؛ بدون Merge هم می‌شود با تغییر فایل `deploy/REQUEST` شروعش کرد.
 
 ## اجرا روی رایانهٔ خودتان
 
@@ -50,7 +50,7 @@ npm test                  # همهٔ آزمون‌ها؛ npm run typecheck
 
 ## ساختار مخزن
 
-`apps/api` (Worker) · `apps/web` (برنامهٔ وب و پروژهٔ اندروید در `android/`) · `packages/shared` (نوع‌ها و قاعدهٔ دسترسی مشترک) · `relay/` · `scripts/` (deploy، بررسی Workers AI، توکن Drive) · `.github/workflows` (CI، اندروید، دیپلوی، بررسی Workers AI) · `docs/`.
+`apps/api` (Worker) · `apps/web` (برنامهٔ وب و پروژهٔ اندروید در `android/`) · `packages/shared` (نوع‌ها و قاعدهٔ دسترسی مشترک) · `relay/` · `scripts/` (deploy، پیش‌آزمون Cloudflare و Groq، بررسی Workers AI، توکن Drive) · `.github/workflows` (CI، اندروید، دیپلوی، بررسی Workers AI) · `docs/`.
 
 </div>
 
@@ -58,16 +58,16 @@ npm test                  # همهٔ آزمون‌ها؛ npm run typecheck
 
 # AMIN CHAT and AMIN AI (English)
 
-A messenger (web + Android) with a real AI assistant, **AMIN AI**, as a permanent, verified contact for every user, running on **Cloudflare Workers AI**. Everything runs on Cloudflare — Workers, Workers AI, Durable Objects, D1 and R2 — with no other server. Persian and English, with proper right-to-left layout.
+A messenger (web + Android) with a real AI assistant, **AMIN AI**, as a permanent, verified contact for every user, running on **Cloudflare Workers AI**, with **Groq** as an optional second provider (it answers quick requests first and is a fallback for Workers AI). Everything runs on Cloudflare — Workers, Workers AI, Durable Objects, D1 and R2 — with no other server. Persian and English, with proper right-to-left layout.
 
 ## Honest status (read this first)
 
 | | |
 |---|---|
-| ✅ Built and tested | The whole brief: the AMIN AI contact, streaming chat with edit / regenerate / search / voice / files, `@AMINAI` in other chats with an independent AI setting per chat (E2EE chats: only what the user selects), six agents (Personal, Research, Coding, Messenger, File, Creative), a task engine with a live operation log, retry and cancel, approval before anything sensitive, manageable per-user memory, group-admin control of the AI level, per-user quota and rate limits. **545 automated tests** (243 API tests on a real workerd, 229 web, 73 script and relay tests); CI is green on GitHub. |
+| ✅ Built and tested | The whole brief: the AMIN AI contact, streaming chat with edit / regenerate / search / voice / files, `@AMINAI` in other chats with an independent AI setting per chat (E2EE chats: only what the user selects), six agents (Personal, Research, Coding, Messenger, File, Creative) plus a General and a fast Quick agent (it runs on Groq and, for example, readies someone's chat for you to open), a task engine with a live operation log, retry and cancel, approval before anything sensitive, manageable per-user memory, group-admin control of the AI level, per-user quota and rate limits. **665 automated tests** (320 API tests on a real workerd, 239 web, 106 script and relay tests); CI is green on GitHub. |
 | ✅ Android | The APK builds on GitHub and its contents are checked (10 checks), workflow *Android app*. |
 | ❌ **Not deployed** | No Cloudflare credentials were available. The deploy script and workflow exist ([docs/deploy.md](docs/deploy.md)) but have never run against Cloudflare, so **there is no live URL**. |
-| ❌ **The real Workers AI call path is unverified** | Model handling was tested against a deterministic double, not a real model. After deploying, run `npm run verify:ai` ([docs/testing.md](docs/testing.md)). The app contains no canned answers: without a connection AMIN AI says so. |
+| ❌ **The real Workers AI and Groq call paths are unverified** | Model handling was tested against deterministic doubles of both services, not a real model. After deploying, run `npm run verify:ai` ([docs/testing.md](docs/testing.md)). The app contains no canned answers: without a connection AMIN AI says so. |
 | ❌ Unverified | Real Google Drive, a real Android device or WebView, a real filtered network. |
 | ❌ Not built | Push notifications while the Android app is closed; Telegram (deliberately: only the extension points are documented, [docs/telegram-extension.md](docs/telegram-extension.md)); two-factor authentication, password reset and account deletion; in-app moderation (an account can only be disabled by editing the database directly). |
 
@@ -75,7 +75,7 @@ The complete lists: [docs/testing.md](docs/testing.md) (what is not verified) an
 
 ## Deploy
 
-Two GitHub secrets (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`), `ADMIN_USERNAMES` in `apps/api/wrangler.jsonc`, then **Actions → Deploy to Cloudflare → Run workflow**. An R2 subscription is required (once, in the Cloudflare dashboard). The Workers Free plan is enough to try it, with two limits described in the guide; Workers Paid is safer. Step by step, with troubleshooting: **[docs/deploy.md](docs/deploy.md)**. Cloudflare's one-click button does not work for this monorepo (explained there), and GitHub shows *Run workflow* only once the workflow is on the default branch, `Main`; without merging, changing the file `deploy/REQUEST` starts it.
+Two GitHub secrets (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`; a third, `GROQ_API_KEY`, is optional), `ADMIN_USERNAMES` in `apps/api/wrangler.jsonc`, then **Actions → Deploy to Cloudflare → Run workflow**. An R2 subscription is required (once, in the Cloudflare dashboard). The Workers Free plan is enough to try it, with two limits described in the guide; Workers Paid is safer. Step by step, with troubleshooting: **[docs/deploy.md](docs/deploy.md)**. Cloudflare's one-click button does not work for this monorepo (explained there), and GitHub shows *Run workflow* only once the workflow is on the default branch, `Main`; without merging, changing the file `deploy/REQUEST` starts it.
 
 ## Run locally
 
@@ -106,4 +106,4 @@ Locally the admin user is `dev_admin`.
 
 ## Repository layout
 
-`apps/api` (the Worker) · `apps/web` (the web app; the Android project is in `android/`) · `packages/shared` (shared types and the access policy) · `relay/` · `scripts/` (deploy, Workers AI check, Drive token) · `.github/workflows` (CI, Android, deploy, Workers AI check) · `docs/`.
+`apps/api` (the Worker) · `apps/web` (the web app; the Android project is in `android/`) · `packages/shared` (shared types and the access policy) · `relay/` · `scripts/` (deploy, the Cloudflare and Groq preflight, Workers AI check, Drive token) · `.github/workflows` (CI, Android, deploy, Workers AI check) · `docs/`.

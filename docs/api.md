@@ -39,7 +39,7 @@ Separately from request rates, **AI usage quota** is per user (defaults 300 000 
 
 | | |
 |---|---|
-| `GET /api/health` | `{ ok, service: "amin-chat", time, environment, endpoints: string[] }`. No authentication, no database access. `endpoints` are the alternative addresses (`PUBLIC_ENDPOINTS`) the apps may learn. |
+| `GET /api/health` | `{ ok, service: "amin-chat", time, environment, endpoints: string[], ai: { "workers-ai": boolean, groq: boolean } }`. No authentication, no database access. `endpoints` are the alternative addresses (`PUBLIC_ENDPOINTS`) the apps may learn. `ai` says only whether each AI service has credentials in this deployment (the Workers AI binding, the `GROQ_API_KEY` secret): yes or no, never a value, and it is **not** a statement that a model answers (that is `/api/ai/models`). |
 
 ## Authentication and account — `/api/auth`
 
@@ -107,9 +107,9 @@ Event types (`RealtimeEvent` in `packages/shared/src/types.ts`): `hello`, `messa
 
 | | |
 |---|---|
-| `GET /agents` | The six agents plus `auto`, each with its tools (`risk`, and `available` + `reason` for tools that are switched off or not configured, e.g. web search without a provider). |
-| `GET /models` | `{ backend: "workers-ai"|"unavailable", models[], defaults, checkedAt }`. Each model: `id`, `label`, `vendor`, `roles`, `capabilities`, `contextWindow`, `pricing`, `deprecatedOn`, `status` (`available` | `unavailable` | `unknown`), `reason`, `reasonCode` (`not_connected`, `deprecated`, `unverified`, `check_failed`, `stale` or null), `checkedAt`, `latencyMs`, `selectable`. The UI shows a model as ready only when `status` is `available`, i.e. a real, tiny call to it succeeded recently. |
-| `POST /models/refresh` | **Admin.** Probe every model now (spends a little of the Workers AI allocation). |
+| `GET /agents` | The eight agents (`general`, `personal`, `research`, `coder`, `messenger`, `file`, `creative` and the fast `quick`) plus `auto`, each with its tools (`risk`, and `available` + `reason` for tools that are switched off or not configured, e.g. web search without a provider). |
+| `GET /models` | `{ providers[], models[], defaults, checkedAt }`. `providers` is `[{ id: "workers-ai"|"groq", label, connected }]` (`connected` = the provider has credentials here). Each model: `id`, `label`, `vendor`, `provider`, `roles`, `capabilities`, `contextWindow`, `pricing`, `deprecatedOn`, `status` (`available` | `unavailable` | `unknown`), `reason`, `reasonCode` (`not_connected`, `deprecated`, `unverified`, `check_failed`, `stale` or null), `checkedAt`, `latencyMs`, `selectable`. The UI shows a model as ready only when `status` is `available`, i.e. a real, tiny call to it succeeded recently. |
+| `POST /models/refresh` | **Admin.** Probe every model of every *connected* provider now (a tiny real call each; spends a little of the Workers AI allocation and of the Groq limits). Models of a provider that is not connected are not touched and stay `unavailable` / `not_connected`. |
 | `GET /usage` | `{ quota: { dailyTokens, dailyRequests, monthlyTokens, custom }, today: { tokens, requests, errors }, month: { tokens, requests }, byDay[], byModel[] }` for the caller. |
 | `GET/POST /threads`, `GET/PATCH/DELETE /threads/:id` | The user's AMIN AI conversations ("new conversation"). `POST` `{ title?, agentId?, modelId? }`; at most 500 per user. `DELETE` cancels active runs, then removes the thread, its messages, runs and search index entries, and the files attached to them (including their copies in R2 or Google Drive). |
 | `GET /threads/:id/messages` | `?before&limit≤100` → `{ messages, hasMore, activeRunId }`. |
@@ -125,7 +125,7 @@ Event types (`RealtimeEvent` in `packages/shared/src/types.ts`): `hello`, `messa
 | | |
 |---|---|
 | `GET /runs` | `?status=active|finished|all&limit≤50` → runs with steps. |
-| `GET /runs/:id` | One run with its steps and approvals. |
+| `GET /runs/:id` | One run with its steps and approvals. A step may carry `action`, a hint for a one-click button: `{ type: "enable_ai_access", conversationId, conversationTitle }` (after a failure caused by a chat whose AI access is off) or `{ type: "open_chat", conversationId | null, userId | null, title }` (from the Quick agent's `chat_open` tool). `open_chat` is only a pointer: the server neither sends, creates nor navigates anything, the app opens the chat when the user presses the button (with `userId` and no `conversationId` it first starts an ordinary, non-secret direct chat through the same endpoint the new-chat search of the chat list uses; no message is sent). |
 | `GET /runs/:id/events` | The operation log (`run_events`): every plan, step, retry, error, decision. |
 | `POST /runs/:id/cancel` | Cancel; in-flight model and tool calls are aborted. |
 | `POST /runs/:id/retry` | Run the newest answer's request again (finished runs of your own conversations). |

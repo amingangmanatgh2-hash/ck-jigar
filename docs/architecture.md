@@ -12,26 +12,26 @@ This is the developer reference. The operator guides (deploy, Android, connectiv
                                              │
    ┌────────────────┬────────────────────────┼───────────────────┬────────────────────┬────────────────┐
    ▼                ▼                        ▼                   ▼                    ▼                ▼
-  D1            UserHub (DO)           RunCoordinator (DO)   RateLimiter (DO)        R2           Workers AI
- all durable    one per user:          one per AI run:       one per limit key:      hot files    env.AI binding
- state          WebSockets, event      executes the run      fixed-window counters   (≤ 7 days /  (the ONLY source
-                fan-out, long-poll     from an alarm,                                 < 5 MiB)     of model output)
+  D1            UserHub (DO)           RunCoordinator (DO)   RateLimiter (DO)        R2           Workers AI  ·  Groq (optional)
+ all durable    one per user:          one per AI run:       one per limit key:      hot files    env.AI binding   plain HTTPS, key in the
+ state          WebSockets, event      executes the run      fixed-window counters   (≤ 7 days /  (main service)   secret GROQ_API_KEY
+                fan-out, long-poll     from an alarm,                                 < 5 MiB)     the ONLY sources of model output
                 ring                   cancel / resume                                  │
                                                                                          ▼
                                                                                   Google Drive (cold files, optional)
 ```
 
-Everything runs in one Worker. There is no other server. Cloudflare services used: Workers, Workers AI, Durable Objects (SQLite-backed classes), D1, R2, static assets, a cron trigger.
+Everything runs in one Worker. There is no other server. Cloudflare services used: Workers, Workers AI, Durable Objects (SQLite-backed classes), D1, R2, static assets, a cron trigger. Outside Cloudflare, only when configured: Groq (a second AI provider), Google Drive (cold files), the optional relays.
 
 ## Repository layout
 
 | Path | What it is |
 |---|---|
 | `packages/shared` | Types and rules used by both sides: constants and limits, the pure AI **access policy** (`access.ts`), `@AMINAI` mention parsing, the endpoint-list parser |
-| `apps/api` | The Worker. `src/routes` (HTTP), `src/services` (logic), `src/agents` (registry, planner, executor, approvals, tools), `src/ai` (models, client, health, usage), `src/do` (the three Durable Objects), `src/storage` (R2 + Drive tiers), `src/middleware`, `src/lib`, `migrations/` |
+| `apps/api` | The Worker. `src/routes` (HTTP), `src/services` (logic), `src/agents` (registry, planner, executor, approvals, tools), `src/ai` (models, client, health, usage, `providers/` for Groq), `src/do` (the three Durable Objects), `src/storage` (R2 + Drive tiers), `src/middleware`, `src/lib`, `migrations/` |
 | `apps/web` | The web app (React 19 + Vite): `src/screens`, `src/components`, `src/lib` (api, endpoint pool, outbox, realtime, e2ee…), `src/locales` (fa, en), service-worker plugin; `android/` is the Capacitor project |
 | `relay/` | Zero-dependency reverse proxy for networks where the Worker's address is blocked |
-| `scripts/` | `deploy.mjs`, `verify-workers-ai.mjs`, `drive-token.mjs`, `dev-api.mjs` |
+| `scripts/` | `deploy.mjs`, `preflight.mjs` (asks Cloudflare and Groq whether everything is in place before a deployment), `verify-workers-ai.mjs`, `drive-token.mjs`, `dev-api.mjs` |
 | `.github/workflows` | CI, Android build, Workers AI check, deploy |
 
 ## Request path
@@ -70,11 +70,21 @@ One **UserHub** Durable Object per user holds all of that user's WebSockets (hib
 
 ## The AI layer (`apps/api/src/ai`)
 
-- **`models.ts` is the only file with Workers AI model ids.** Everything else asks for a *role* (`chat`, `fast`, `code`, `vision`, `asr`, `image`). `ROLE_PRIORITY` is the fallback order; `deprecatedOn` retires a model. A unit test fails if an `@cf/` id appears anywhere else.
-- **`client.ts`** calls `env.AI.run` through the binding (optionally via an AI Gateway id), normalises the three response shapes to one, parses streams, applies per-model tuning (e.g. reasoning effort for `chat`/`fast` purposes), retries without tuning parameters a model rejects, and walks the candidate list on failure. A cancelled request maps to `AI_ABORTED`.
-- **`health.ts`** decides what the UI may call *ready*. A model is ready only if a real, tiny call to it succeeded (admins can trigger the check; results are cached 20 min). A model that fails at runtime is unavailable for 20 min. If *every* verdict is stale or failed, calls are still attempted rather than failing blind. `ModelDto.reasonCode` is one of `not_connected | deprecated | unverified | check_failed | stale`, or null when ready.
-- **`usage.ts`** logs every call (`ai_usage`: model, purpose, tokens, estimated flag, latency, status ok/fallback/error) and enforces the per-user quota (defaults 300 000 tokens/day, 400 requests/day, 4 000 000 tokens/month; per-user override by an admin). Counts are estimates when the model reports no usage, and are marked so.
-- **Without the binding** (`dev:api:offline`, or a broken deploy) every AI feature answers `AI_NOT_CONNECTED`. There is no canned or simulated output anywhere in production code; the fake model exists only in the API tests, behind a service binding.
+Two providers, one interface. **Workers AI** (the `env.AI` binding) is the main infrastructure; **Groq** (plain HTTPS, optional) is a second provider that answers quick requests first and takes over when Workers AI cannot answer. Each provider is *connected* when its credential exists (`providers/index.ts`: the binding, the `GROQ_API_KEY` secret); a provider that is not connected is skipped everywhere and its models are listed as `unavailable` with reason `not_connected`.
+
+- **`models.ts` is the only file with model ids** (Workers AI `@cf/…` and Groq alike; a unit test fails if any id of the registry appears in another file). Everything else asks for a *role* (`chat`, `fast`, `code`, `vision`, `asr`, `image`). `ROLE_PRIORITY` is the fallback order; `deprecatedOn` retires a model. Each model has a `provider`; Groq models are chat-only (no vision, audio or images).
+  - `fast` (routing, planning, titles, summaries, the Quick agent): **Groq first** (gpt-oss 20B, then 120B), then the Workers AI models.
+  - `chat` and `code`: **Workers AI first**, Groq last. `vision`, `asr`, `image`: Workers AI only.
+- **`client.ts`** walks the candidate list on failure. A candidate must have a connected provider, a prompt small enough for it (`maxInputTokens`: Groq's free tier allows about 8 000 tokens per minute, so prompts above 5 000 estimated tokens, `GROQ_MAX_INPUT_TOKENS`, go to Workers AI), not be marked unavailable by `health.ts`, and not be cooling down. Error handling is per kind (`errors.ts`):
+  - `account_limit` (a provider's whole allowance is spent, e.g. Workers AI's daily free allowance): the *rest of that provider* is skipped, **other providers are still tried**, so a spent Cloudflare allowance does not stop the assistant;
+  - `capacity` (Groq: HTTP 429, 498, 503; per-minute and per-day limits look alike): that model is skipped for the time Groq's `Retry-After` names, between 1 s and 2 min (`cooldown.ts`; kept in the memory of the Worker instance, an optimisation only: another instance may try once and learn the same). `too_large` (HTTP 413) and the other kinds fall through to the next candidate. 401/403 are `access` (the model is marked unavailable and the next candidate answers);
+  - once text reached the user the answer cannot silently switch models, so the error is shown instead.
+- **`providers/groq.ts`** is the Groq adapter (`POST /openai/v1/chat/completions`, `GET /openai/v1/models`). It sends `max_completion_tokens`, `reasoning_effort` (`low` for the fast purposes, `medium` otherwise) and `include_reasoning: false`; because reasoning tokens count against the limit, small caps get headroom, and an answer that is empty (the limit was spent thinking) is skipped, never shown. A `400` for a tuning parameter is retried once without tuning. The `AbortSignal` is forwarded, so cancelling a run stops the request (and its billing). `stream_options` is not sent; usage is read from `usage` or `x_groq.usage` and estimated (and marked so) when absent. The key is only ever put in the `Authorization` header: it appears in no error, response or database row.
+- **`health.ts`** decides what the UI may call *ready*. A model is ready only if a real, tiny call to it succeeded (admins can trigger the check; results are cached 20 min). It asks each provider's catalogue first (`env.AI.models`, Groq `GET /models`), then probes text models with a minimal real call. A model that fails at runtime is unavailable for 20 min. If *every* verdict is stale or failed, calls are still attempted rather than failing blind. `ModelDto.reasonCode` is one of `not_connected | deprecated | unverified | check_failed | stale`, or null when ready.
+- **`usage.ts`** logs every call (`ai_usage`: model, purpose, tokens, estimated flag, latency, status ok/fallback/error) and enforces the per-user quota (defaults 300 000 tokens/day, 400 requests/day, 4 000 000 tokens/month; per-user override by an admin). The quota counts both providers together. Counts are estimates when the model reports no usage, and are marked so.
+- **Groq's limits belong to the Groq *organisation***, so every user of one deployment shares them, whatever the per-user quota says. That is why Groq is the first choice only for short calls, and why a refusal moves on to Workers AI instead of failing.
+- **Privacy:** a prompt sent to a Groq model leaves Cloudflare ([SECURITY.md](SECURITY.md)). The access policy decides what may be in a prompt, not which provider receives it; an operator who does not accept that does not set `GROQ_API_KEY`.
+- **Without any provider** (`dev:api:offline`, or a broken deploy) every AI feature answers `AI_NOT_CONNECTED`. There is no canned or simulated output anywhere in production code; the fake models (Workers AI, Groq, Google) exist only in the API tests, behind service bindings.
 
 ## Who may be read: the access policy
 
@@ -93,11 +103,12 @@ One **UserHub** Durable Object per user holds all of that user's WebSockets (hib
 
 ## Agents, runs and the task engine
 
-Seven agents (`agents/registry.ts`) plus `auto`, which routes each request:
+Eight agents (`agents/registry.ts`) plus `auto`, which routes each request:
 
 | Agent | Tools |
 |---|---|
 | general | none (direct answer) |
+| quick | `chat_open`, `chat_list`, `todo_list`, `reminder_list` (read-only; model role `fast`, so Groq answers first; short answers) |
 | personal | `todo_add/list/complete`, `reminder_set/list/cancel`, `project_save/list`, `memory_propose`, `history_search`, `compose` |
 | research | `web_search`, `file_read`, `file_list`, `history_search`, `compose` |
 | coder | none (direct answer) |
