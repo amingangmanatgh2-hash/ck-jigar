@@ -2,4 +2,4 @@ deploy
 # Line 1 is "check" (run the plan and the tests only; nothing is published) or "deploy" (publish to Cloudflare).
 # A commit that changes this file, on Main or on an arena/* branch, starts the workflow "Deploy to Cloudflare" (.github/workflows/deploy.yml).
 # Line 4 and below are free notes: change them to start another run.
-note: sixth attempt. The secret is read and Cloudflare answered for the first time: the token has Workers but no D1 / R2 rows. This run lists the rows to add and an overview of what passed.
+note: seventh attempt. Preflight now also catches a token with a Workers Tail row (it can list Workers but not upload) and a missing workers.dev address; this run checks that against the real Cloudflare answers.

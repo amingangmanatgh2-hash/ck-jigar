@@ -14,8 +14,10 @@
  *                  "Workers Scripts" row (the one an upload needs) passes the second, so a token with the wrong Workers row is caught here
  *     d1           the token has the D1 right (the "Edit Cloudflare Workers" template does not include it)
  *     r2           R2 is switched on for the account and the token has the R2 right
+ *     subdomain    the account has a workers.dev address. Wrangler cannot ask for one inside GitHub, so without it the first deployment
+ *                  stops (read from Wrangler's own source). Only when the configuration wants workers.dev (the default). A REFUSED call is
+ *                  reported under "workers"
  *   not blocking (the service runs without it):
- *     subdomain    the account has a workers.dev address (else the first deploy asks for one). A refusal is reported under "workers" 
  *     groq         the optional Groq key works
  *   a hint, not a check (level "info"):
  *     rights       added once when Cloudflare answered "Authentication error" to any of the checks above: the whole list of token rows
@@ -28,8 +30,8 @@
  * (those live in one file, apps/api/src/ai/models.ts); whether a model really answers is what the signed-in availability check
  * ("Models & usage") finds out, with a real request per model.
  */
-import { appendFileSync } from 'node:fs';
-import { inspectGroqKey, redact } from './deploy.mjs';
+import { appendFileSync, readFileSync } from 'node:fs';
+import { inspectGroqKey, parseJsonc, redact } from './deploy.mjs';
 
 export const CF_API = 'https://api.cloudflare.com/client/v4';
 export const GROQ_MODELS_URL = 'https://api.groq.com/openai/v1/models';
@@ -87,7 +89,21 @@ const info = (id, title, detail) => ({ id, title, level: 'info', detail });
 /** Marks a result that is a refusal of the token, so that the hint with the list of rows is added. */
 const refused = (result) => ({ ...result, refused: true });
 
-export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() }) {
+/**
+ * Does this configuration publish to workers.dev? Wrangler's own rule: `workers_dev` when it is set, otherwise yes exactly when there are no
+ * routes. (Then the account needs a workers.dev address.) Anything unreadable counts as yes: the stricter answer.
+ */
+export function wantsWorkersDev(configText) {
+  try {
+    const c = parseJsonc(configText);
+    const routes = [...(Array.isArray(c.routes) ? c.routes : []), ...(c.route ? [c.route] : [])];
+    return c.workers_dev ?? routes.length === 0;
+  } catch {
+    return true;
+  }
+}
+
+export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now(), needsWorkersDev = true }) {
   const results = [];
   const token = typeof env.CLOUDFLARE_API_TOKEN === 'string' ? env.CLOUDFLARE_API_TOKEN.trim() : '';
   const account = typeof env.CLOUDFLARE_ACCOUNT_ID === 'string' ? env.CLOUDFLARE_ACCOUNT_ID.trim() : '';
@@ -170,10 +186,13 @@ export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep 
       } else if (denied(r)) results.push(refused(fail('r2', 'R2 file storage', `R2 cannot be used with this token (${cfProblem(r.status, r.body)}). If R2 was never switched on: dashboard → Storage & databases → R2 → Overview → subscribe. Otherwise add Account → Workers R2 Storage → Edit to the token.`)));
       else results.push(fail('r2', 'R2 file storage', `Cloudflare answered unexpectedly (${cfProblem(r.status, r.body)}). Run it again; if it repeats, look at cloudflarestatus.com.`));
 
+      const noAddress = (s.status === 200 && !s.body?.result?.subdomain) || (s.status === 404 && s.body?.errors?.some?.((e) => e?.code === 10007));
       if (s.error) results.push(warn('subdomain', 'workers.dev address', s.error));
       else if (s.status === 200 && s.body?.result?.subdomain) results.push(ok('subdomain', 'workers.dev address', 'the account has one'));
       else if (denied(s)) results.push(skip('subdomain', 'workers.dev address', `not read: Cloudflare refuses the token here (${cfProblem(s.status, s.body)}); see "Workers" above`));
-      else results.push(warn('subdomain', 'workers.dev address', `${s.status === 200 ? 'the account has none yet' : `could not be read (${cfProblem(s.status, s.body)})`}. Open "Workers & Pages" in the Cloudflare dashboard once: it asks you to choose one. Without it the first deployment stops.`));
+      else if (noAddress && needsWorkersDev) results.push(fail('subdomain', 'workers.dev address', 'the account has no workers.dev address yet, and Wrangler cannot ask you for one inside GitHub, so the first deployment would stop. Open "Workers & Pages" in the Cloudflare dashboard once and choose a name (free, one minute): https://dash.cloudflare.com/?to=/:account/workers/onboarding'));
+      else if (noAddress) results.push(skip('subdomain', 'workers.dev address', 'the account has none, and the configuration does not publish to workers.dev, so none is needed'));
+      else results.push(warn('subdomain', 'workers.dev address', `could not be read (${cfProblem(s.status, s.body)}). If it repeats, open "Workers & Pages" in the Cloudflare dashboard once: a new account is asked to choose an address there.`));
 
       // ONE list of rows for all the refusals above (they have one cause: a token with too few rows)
       if (results.some((x) => x.refused)) results.push(info('rights', 'Token rights', RIGHTS_FIX));
@@ -207,10 +226,16 @@ export function renderSummary(results) {
   return lines.join('\n');
 }
 
-export async function main({ env = process.env, fetch: fetchFn = globalThis.fetch, log = console.log, sleep, now, summaryFile = env.GITHUB_STEP_SUMMARY } = {}) {
+export async function main({ env = process.env, fetch: fetchFn = globalThis.fetch, log = console.log, sleep, now, summaryFile = env.GITHUB_STEP_SUMMARY, readConfig = () => readFileSync(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8') } = {}) {
   const secrets = [env.CLOUDFLARE_API_TOKEN, env.GROQ_API_KEY].map((v) => (typeof v === 'string' ? v.trim() : '')).filter((v) => v.length >= 8);
   const clean = (text) => secrets.reduce((t, s) => redact(t, s), String(text));
-  const results = await runChecks({ env, fetch: fetchFn, sleep, now });
+  let needsWorkersDev = true;
+  try {
+    needsWorkersDev = wantsWorkersDev(readConfig());
+  } catch {
+    // no readable configuration: the stricter assumption stays
+  }
+  const results = await runChecks({ env, fetch: fetchFn, sleep, now, needsWorkersDev });
   const inActions = env.GITHUB_ACTIONS === 'true';
   // one annotation per message, one line, with the characters GitHub treats specially escaped
   const annotate = (kind, title, text) => log(`::${kind} title=${title}::${clean(text).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}`);

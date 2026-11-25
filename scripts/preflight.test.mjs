@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { CF_API, GROQ_MODELS_URL, RIGHTS_FIX, TOKEN_ROWS, main, renderSummary, runChecks } from './preflight.mjs';
+import { CF_API, GROQ_MODELS_URL, RIGHTS_FIX, TOKEN_ROWS, main, renderSummary, runChecks, wantsWorkersDev } from './preflight.mjs';
 
 const ACCOUNT = 'c7c787887fc9fab25af0db15ebbf46f5';
 const TOKEN = 'cfut_UnitTestTokenAbCdEf0123456789xyz';
@@ -211,7 +211,7 @@ test('a token that can only LIST Workers (a "Workers Tail" row) is not reported 
   assert.equal(level(both, 'workers'), 'ok');
   const noAddress = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(404, 10007, 'workers.api.error.no_subdomain') }).fetch, ...quick });
   assert.equal(level(noAddress, 'workers'), 'ok');
-  assert.equal(level(noAddress, 'subdomain'), 'warn');
+  assert.equal(level(noAddress, 'subdomain'), 'fail');
   // an outage of the address call is neither (the retry already ran)
   const outage = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(500, 1, 'boom') }).fetch, ...quick });
   assert.equal(level(outage, 'workers'), 'ok');
@@ -266,9 +266,9 @@ test('main in GitHub: the hint is a warning, and ONE overview line says what pas
   assert.match(line, /Skipped: workers\.dev address \(not read: Cloudflare refuses the token here/);
   assert.match(line, /Failed: Workers, D1 database, R2 file storage\./);
   assert.ok(!line.includes('Warnings:'), 'nothing only warns here');
-  // a warning appears when something only warns: no address yet
+  // a warning appears when something only warns: the address could not be read (an outage)
   const warned = [];
-  await main({ env: env({ GITHUB_ACTIONS: 'true' }), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(404, 10007, 'no_subdomain') }).fetch, log: (m) => warned.push(m), summaryFile: undefined, ...quick });
+  await main({ env: env({ GITHUB_ACTIONS: 'true' }), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(500, 1, 'boom') }).fetch, log: (m) => warned.push(m), summaryFile: undefined, ...quick });
   assert.match(warned.find((l) => l.startsWith('::notice title=Preflight overview::')), /Warnings: workers\.dev address\./);
   // without a Groq key it is "skipped", and says why
   const bare = [];
@@ -309,19 +309,68 @@ test('existing resources are recognised: an update, not a first deployment', asy
   assert.match(detail(results, 'r2'), /"amin-chat-files" exists/);
 });
 
-test('no workers.dev address is only a warning (and says what to do)', async () => {
+test('no workers.dev address stops a first deployment (Wrangler cannot ask inside GitHub) and says where to get one; unreadable is only a warning', async () => {
   const none = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(404, 10007, 'workers.api.error.no_subdomain') }).fetch, ...quick });
-  assert.equal(level(none, 'subdomain'), 'warn');
+  assert.equal(level(none, 'subdomain'), 'fail');
+  assert.match(detail(none, 'subdomain'), /no workers\.dev address yet, and Wrangler cannot ask you for one inside GitHub/);
   assert.match(detail(none, 'subdomain'), /Open "Workers & Pages"/);
+  assert.match(detail(none, 'subdomain'), /https:\/\/dash\.cloudflare\.com\/\?to=\/:account\/workers\/onboarding/);
+  assert.ok(!detail(none, 'subdomain').includes(ACCOUNT), 'the account id is not printed (the link says :account)');
+  assert.equal(level(none, 'workers'), 'ok', 'Workers itself is fine');
   const empty = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfOk({}) }).fetch, ...quick });
-  assert.equal(level(empty, 'subdomain'), 'warn');
+  assert.equal(level(empty, 'subdomain'), 'fail');
   assert.equal(level(none, 'rights'), undefined, 'a missing address is not a token problem');
   assert.equal(level(empty, 'rights'), undefined);
+  // when the configuration does not publish to workers.dev, no address is needed
+  const notNeeded = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(404, 10007, 'no_subdomain') }).fetch, needsWorkersDev: false, ...quick });
+  assert.equal(level(notNeeded, 'subdomain'), 'skip');
+  assert.match(detail(notNeeded, 'subdomain'), /does not publish to workers\.dev/);
+  // Wrangler recognises "no address" by the code 10007 (not by the status): a 404 with another code is something unexpected
+  const otherNotFound = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(404, 7003, 'no route') }).fetch, ...quick });
+  assert.equal(level(otherNotFound, 'subdomain'), 'warn');
+  assert.match(detail(otherNotFound, 'subdomain'), /could not be read \(HTTP 404, code 7003/);
+  // an answer that is neither "one", "none" nor "refused" is only a warning
+  const odd = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(500, 1, 'boom') }).fetch, ...quick });
+  assert.equal(level(odd, 'subdomain'), 'warn');
+  assert.match(detail(odd, 'subdomain'), /could not be read \(HTTP 500/);
   // a REFUSED address is not "no address": it is a token problem, reported under Workers (which brings the list of rows)
   const refused = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(403, 10000, 'Authentication error') }).fetch, ...quick });
   assert.equal(level(refused, 'subdomain'), 'skip');
   assert.equal(level(refused, 'workers'), 'fail');
   assert.equal(level(refused, 'rights'), 'info', 'a refused address alone brings the list of rows');
+});
+
+test('wantsWorkersDev follows Wrangler\'s rule: workers_dev when set, otherwise yes exactly when there are no routes', () => {
+  assert.equal(wantsWorkersDev('{ "name": "x" }'), true);
+  assert.equal(wantsWorkersDev('{ "routes": [ { "pattern": "chat.example.com", "custom_domain": true } ] }'), false);
+  assert.equal(wantsWorkersDev('{ "route": "chat.example.com/*" }'), false);
+  assert.equal(wantsWorkersDev('{ "routes": [], "name": "x" }'), true);
+  assert.equal(wantsWorkersDev('{ "routes": ["a.example.com/*"], "workers_dev": true }'), true);
+  assert.equal(wantsWorkersDev('{ "workers_dev": false }'), false);
+  assert.equal(wantsWorkersDev('{\n  // comments and trailing commas, as in wrangler.jsonc\n  "workers_dev": false, /* off */\n}'), false);
+  assert.equal(wantsWorkersDev('this is not json'), true, 'unreadable → the stricter answer');
+  assert.equal(wantsWorkersDev(''), true);
+  // this repository publishes to workers.dev, so a first deployment needs the address
+  assert.equal(wantsWorkersDev(readFileSync(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8')), true);
+});
+
+test('main reads the configuration of the Worker: with routes only, a missing address is not a problem; unreadable → the stricter rule', async () => {
+  const noAddress = world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(404, 10007, 'no_subdomain') });
+  const run = async (readConfig) => {
+    const logs = [];
+    const code = await main({ env: env(), fetch: noAddress.fetch, log: (m) => logs.push(m), summaryFile: undefined, readConfig, ...quick });
+    return { code, out: logs.join('\n') };
+  };
+  const real = await run(undefined);
+  assert.equal(real.code, 1, 'the real configuration publishes to workers.dev');
+  assert.match(real.out, /✗ workers\.dev address — the account has no workers\.dev address yet/);
+  const routesOnly = await run(() => '{ "routes": [ { "pattern": "chat.example.com", "custom_domain": true } ] }');
+  assert.equal(routesOnly.code, 0);
+  assert.match(routesOnly.out, /– workers\.dev address — the account has none, and the configuration does not publish to workers\.dev/);
+  const broken = await run(() => {
+    throw new Error('no such file');
+  });
+  assert.equal(broken.code, 1);
 });
 
 test('Groq problems never block: a rejected key, a rate limit, an outage and a malformed key all only warn', async () => {
