@@ -9,11 +9,13 @@
  *   blocking (the deployment would fail anyway, so it stops here with the fix in plain words):
  *     credentials  the account id and the token are present and look like what they should be
  *     token        Cloudflare accepts the token and it is active
- *     workers      the token can manage Workers on THIS account (so it is also the right account id)
+ *     workers      the token can manage Workers on THIS account (so it is also the right account id). Two calls: the list of Workers AND
+ *                  the account's workers.dev address. Cloudflare lets a row like "Workers Tail → Read" pass the first, but only the
+ *                  "Workers Scripts" row (the one an upload needs) passes the second, so a token with the wrong Workers row is caught here
  *     d1           the token has the D1 right (the "Edit Cloudflare Workers" template does not include it)
  *     r2           R2 is switched on for the account and the token has the R2 right
  *   not blocking (the service runs without it):
- *     subdomain    the account has a workers.dev address (else the first deploy asks for one)
+ *     subdomain    the account has a workers.dev address (else the first deploy asks for one). A refusal is reported under "workers" 
  *     groq         the optional Groq key works
  *   a hint, not a check (level "info"):
  *     rights       added once when Cloudflare answered "Authentication error" to any of the checks above: the whole list of token rows
@@ -73,7 +75,7 @@ async function call(fetchFn, sleep, url, token, label) {
 
 /** The rows a token needs for this deployment, as shown in the dashboard ("Permissions": three drop-downs per row). */
 export const TOKEN_ROWS = ['Workers Scripts → Edit', 'D1 → Edit', 'Workers R2 Storage → Edit', 'Account Settings → Read'];
-export const RIGHTS_FIX = `Edit the token once: https://dash.cloudflare.com/profile/api-tokens → your token → Edit. Make sure it has these rows, all of the kind "Account": ${TOKEN_ROWS.join(' · ')}. Save. The token text does not change, so the GitHub secret stays as it is. (فارسی: توکن را یک بار ویرایش کنید؛ این ردیف‌ها باید از نوع Account باشند: Workers Scripts Edit، D1 Edit، Workers R2 Storage Edit، Account Settings Read. متن توکن عوض نمی‌شود و Secret در گیت‌هاب همان می‌ماند.)`;
+export const RIGHTS_FIX = `Edit the token once: https://dash.cloudflare.com/profile/api-tokens → your token → Edit. Make sure it has these rows, all of the kind "Account" (Workers SCRIPTS, not Workers Tail): ${TOKEN_ROWS.join(' · ')}. Save. The token text does not change, so the GitHub secret stays as it is. (فارسی: توکن را یک بار ویرایش کنید؛ این ردیف‌ها باید از نوع Account باشند: Workers Scripts Edit، D1 Edit، Workers R2 Storage Edit، Account Settings Read. متن توکن عوض نمی‌شود و Secret در گیت‌هاب همان می‌ماند.)`;
 /** Cloudflare refuses the token itself (a missing row), as opposed to being down or answering something unexpected. */
 const denied = (x) => x.status === 401 || x.status === 403;
 
@@ -143,7 +145,12 @@ export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep 
       const [w, d, r, s] = await Promise.all([api(`${A}/workers/scripts`), api(`${A}/d1/database?per_page=100`), api(`${A}/r2/buckets`), api(`${A}/workers/subdomain`)]);
 
       if (w.error) results.push(fail('workers', 'Workers', w.error));
-      else if (w.status === 200 && w.body?.success !== false) results.push(ok('workers', 'Workers', 'the token can manage Workers on this account'));
+      else if (w.status === 200 && w.body?.success !== false) {
+        // Listing Workers is also allowed by a row like "Workers Tail → Read"; reading the workers.dev address needs the "Workers Scripts"
+        // row, which is the one an upload needs. Both answers come back together, so a wrong Workers row is caught now, not at the upload.
+        if (denied(s)) results.push(refused(fail('workers', 'Workers', `the token can list the Workers of this account, but Cloudflare refuses it where the row "Workers Scripts" is needed (${cfProblem(s.status, s.body)}). A row such as "Workers Tail" allows the list and nothing else. Add the row Account → Workers Scripts → Edit.`)));
+        else results.push(ok('workers', 'Workers', 'the token can manage Workers on this account'));
+      }
       else if (denied(w)) results.push(refused(fail('workers', 'Workers', `the token cannot manage Workers on this account (${cfProblem(w.status, w.body)}). Either CLOUDFLARE_ACCOUNT_ID belongs to a different account than the token, or the token lacks "Workers Scripts: Edit" (template "Edit Cloudflare Workers").`)));
       else results.push(fail('workers', 'Workers', `Cloudflare answered unexpectedly (${cfProblem(w.status, w.body)}). Run it again; if it repeats, look at cloudflarestatus.com.`));
 
@@ -165,7 +172,7 @@ export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep 
 
       if (s.error) results.push(warn('subdomain', 'workers.dev address', s.error));
       else if (s.status === 200 && s.body?.result?.subdomain) results.push(ok('subdomain', 'workers.dev address', 'the account has one'));
-      else if (denied(s)) results.push(refused(warn('subdomain', 'workers.dev address', `could not be read (${cfProblem(s.status, s.body)}). That is the token being refused, not a missing address; the first deployment has to read it to tell you where the service lives.`)));
+      else if (denied(s)) results.push(skip('subdomain', 'workers.dev address', `not read: Cloudflare refuses the token here (${cfProblem(s.status, s.body)}); see "Workers" above`));
       else results.push(warn('subdomain', 'workers.dev address', `${s.status === 200 ? 'the account has none yet' : `could not be read (${cfProblem(s.status, s.body)})`}. Open "Workers & Pages" in the Cloudflare dashboard once: it asks you to choose one. Without it the first deployment stops.`));
 
       // ONE list of rows for all the refusals above (they have one cause: a token with too few rows)

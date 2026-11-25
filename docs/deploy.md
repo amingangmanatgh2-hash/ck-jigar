@@ -54,11 +54,11 @@ Workers AI همچنان زیرساخت اصلی است. Groq سرویس دوم �
 
 ۳. **توکن API:** [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) ← Create Token ← قالب **Edit Cloudflare Workers** ← Use template. این قالب (طبق فهرست رسمی Cloudflare) ردیف‌های Workers Scripts، Workers R2 Storage و Account Settings را دارد ولی **D1 را ندارد**؛ پس یک ردیف دیگر اضافه کنید (دکمهٔ «+ Add more»): Account ← **D1** ← **Edit**. در «Account Resources» همان حساب خودتان را انتخاب کنید ← Continue to summary ← Create Token. مقدار توکن **فقط یک بار** نشان داده می‌شود؛ همان لحظه کپی کنید.
 
-   **این چهار ردیف باید در توکن باشد، هر چهار از نوع Account** (اگر توکن را «Custom» ساخته‌اید، دقیقاً همین‌ها):
+   **این چهار ردیف باید در توکن باشد، هر چهار از نوع Account** (اگر توکن را «Custom» ساخته‌اید، دقیقاً همین‌ها؛ ردیف Zone لازم نیست و دامنه هم لازم نیست):
 
    | ردیف | سطح | برای چه |
    |---|---|---|
-   | Workers Scripts | **Edit** | بارگذاری Worker، فایل‌های وب، زمان‌بندی، Secretها |
+   | Workers Scripts | **Edit** | بارگذاری Worker، فایل‌های وب، زمان‌بندی، Secretها. **Workers Tail** جای آن نیست؛ آن فقط فهرست را می‌خواند و بارگذاری نمی‌کند |
    | D1 | **Edit** | ساختن پایگاه داده و اجرای migrationها |
    | Workers R2 Storage | **Edit** | ساختن و خواندن مخزن فایل `amin-chat-files` |
    | Account Settings | **Read** | خواندن اطلاعات حساب (مثلاً آدرس workers.dev) |
@@ -203,7 +203,8 @@ npm run dev:web            # Vite روی ‎:5173، /api را به Worker محل
 | `AI_NOT_CONNECTED` | نه بایندینگ `AI` هست و نه `GROQ_API_KEY` (حالت offline، یا wrangler.jsonc دست‌کاری شده) |
 | مدل «در دسترس نیست» با دلیل `check_failed` یا `unverified` | یک مدل خطا داده (۲۰ دقیقه کنار می‌رود) یا هنوز بررسی نشده؛ دکمهٔ بررسی را بزنید. اگر همیشه شکست می‌خورد، به `npm run verify:ai` نگاه کنید |
 | Preflight: «✗ Cloudflare credentials … are missing» و زیرش «Which secrets this run sees» | Secret ساخته نشده یا جای دیگری ساخته شده (باید Repository secret همین مخزن باشد؛ ساده‌ترین راه: یک Secret به نام `DEPLOY_ENV`، لینک در مرحلهٔ ۴). اگر `DEPLOY_ENV` را ساخته‌اید و باز هم می‌گوید نیست، مرحلهٔ «Read the optional single secret DEPLOY_ENV» در همان اجرا می‌گوید کدام خط را نخوانده (اسم خط، هرگز مقدار). اگر اسم دیگری را (مثلاً `CLOUDFLARE_TOKEN`) پیدا کرده باشد، همان را می‌گوید؛ GitHub اجازهٔ تغییر اسم نمی‌دهد، پس Secret را با اسم درست دوباره بسازید: `CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN` (یا `CF_ACCOUNT_ID` و `CF_API_TOKEN`). یک حرف فرق هم یعنی «پیدا نشد» |
-| Preflight: «✗ D1 database … no D1 right» (یا «R2 … cannot be used with this token»، یا «workers.dev address … the token being refused») و یک هشدار «Token rights» | توکن یک یا چند ردیف از چهار ردیف مرحلهٔ ۳ را ندارد (خطای «Authentication error» با کد ۱۰۰۰۰ یعنی همین). توکن را Edit کنید و ردیف‌های کم را اضافه کنید؛ مقدار توکن عوض نمی‌شود |
+| Preflight: «✗ Workers … can list the Workers … but … where the row "Workers Scripts" is needed» | ردیف **Workers Tail** (یا مشابه) را گذاشته‌اید به‌جای **Workers Scripts**؛ ردیف Workers Scripts ← Edit را اضافه کنید |
+| Preflight: «✗ D1 database … no D1 right» (یا «R2 … cannot be used with this token») و یک هشدار «Token rights» | توکن یک یا چند ردیف از چهار ردیف مرحلهٔ ۳ را ندارد (خطای «Authentication error» با کد ۱۰۰۰۰ یعنی همین). توکن را Edit کنید و ردیف‌های کم را اضافه کنید؛ مقدار توکن عوض نمی‌شود |
 | Preflight: «✗ R2 file storage … not switched on» | اشتراک R2 فعال نیست (داشبورد ← Storage & databases ← R2 ← Overview ← خرید) |
 | Preflight: «✗ Workers … different account» | `CLOUDFLARE_ACCOUNT_ID` مال حساب دیگری است یا توکن «Workers Scripts: Edit» ندارد |
 | Preflight: «! Groq … rejected the key» | کلید Groq غلط یا باطل است؛ کلید تازه بسازید و Secret را عوض کنید. (فقط هشدار است؛ بدون Groq هم deploy می‌شود) |
