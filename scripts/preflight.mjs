@@ -82,11 +82,16 @@ export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep 
   const missing = [!account && 'CLOUDFLARE_ACCOUNT_ID', !token && 'CLOUDFLARE_API_TOKEN'].filter(Boolean);
   let usable = false;
   if (missing.length > 0) {
+    // Where to add them: a direct link when the repository is known (it is, inside GitHub Actions). In Actions the workflow also accepts
+    // the two common shorter spellings, so the hint names them.
+    const link = env.GITHUB_REPOSITORY ? `https://github.com/${env.GITHUB_REPOSITORY}/settings/secrets/actions` : 'GitHub → Settings → Secrets and variables → Actions';
+    const spelling = env.GITHUB_ACTIONS === 'true' ? ' (CF_ACCOUNT_ID and CF_API_TOKEN are accepted as well)' : '';
+    const plural = missing.length > 1;
     results.push(
       fail(
         'credentials',
         'Cloudflare credentials',
-        `${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} missing. Add ${missing.length > 1 ? 'them' : 'it'} in GitHub: Settings → Secrets and variables → Actions → New repository secret (the name must match exactly).`,
+        `${missing.join(' and ')} ${plural ? 'are' : 'is'} missing, so nothing could be checked. Add ${plural ? 'them' : 'it'} as a REPOSITORY secret: ${link} → button "New repository secret"; the name must match exactly${spelling}. A Variable, a Codespaces secret or a Dependabot secret does not work. (فارسی: ${plural ? 'این Secretها به workflow نرسیده‌اند' : 'این Secret به workflow نرسیده است'}؛ باید در همین مخزن و در بخش Actions ← Repository secrets ساخته شود، نه Variable.)`,
       ),
     );
   } else if (!/^[0-9a-f]{32}$/i.test(account)) {

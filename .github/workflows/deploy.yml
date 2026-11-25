@@ -77,8 +77,8 @@ jobs:
         id: preflight
         if: steps.ask.outputs.mode == 'deploy'
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           set -o pipefail
@@ -91,8 +91,8 @@ jobs:
         id: deploy
         if: steps.ask.outputs.mode == 'deploy'
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           set -o pipefail
@@ -156,6 +156,41 @@ jobs:
         run: |
           echo "## Check passed: the plan is valid and every test is green. Nothing was published." >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=Check passed::the plan is valid and every test is green; nothing was published"
+      - name: Which secrets does this run see? (names only, never values)
+        if: failure() && steps.preflight.outcome == 'failure'
+        env:
+          VISIBLE_SECRETS: ${{ toJSON(secrets) }}
+          REPO: ${{ github.repository }}
+        run: |
+          NAMES=$(printf '%s' "$VISIBLE_SECRETS" | jq -r 'keys[] | select(. != "github_token")' | sort | head -n 30 | paste -sd ' ' -)
+          has() { printf '%s\n' $NAMES | grep -qx "$1"; }
+          state() { if has "$1"; then echo "found"; else echo "NOT FOUND"; fi; }
+          SEE=$(printf '%s' "$NAMES" | sed 's/ /, /g')
+          [ -n "$SEE" ] || SEE="none"
+          LINK="https://github.com/$REPO/settings/secrets/actions"
+          if [ -z "$NAMES" ]; then
+            HINT="No secret at all reaches this workflow, so they were added somewhere else. They must be REPOSITORY secrets of $REPO: open $LINK (tab Actions) and press New repository secret. Variables, Codespaces and Dependabot secrets are not seen by this workflow."
+          else
+            HINT="This run needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN (CF_ACCOUNT_ID and CF_API_TOKEN work too), and optionally GROQ_API_KEY. A name that differs by one character is not found. Add or fix them at $LINK"
+          fi
+          echo "Secrets this run can see (names only): $SEE"
+          echo "CLOUDFLARE_ACCOUNT_ID or CF_ACCOUNT_ID: $( (has CLOUDFLARE_ACCOUNT_ID || has CF_ACCOUNT_ID) && echo found || echo 'NOT FOUND')"
+          echo "CLOUDFLARE_API_TOKEN or CF_API_TOKEN:   $( (has CLOUDFLARE_API_TOKEN || has CF_API_TOKEN) && echo found || echo 'NOT FOUND')"
+          echo "GROQ_API_KEY (optional):                $(state GROQ_API_KEY)"
+          echo "::warning title=Secrets this run can see (names only)::$SEE. $HINT"
+          {
+            echo "### Secrets this run can see (names only, never values)"
+            echo
+            echo "\`$SEE\`"
+            echo
+            echo "$HINT"
+            echo
+            echo "| Needed | State |"
+            echo "|---|---|"
+            echo "| CLOUDFLARE_ACCOUNT_ID (or CF_ACCOUNT_ID) | $( (has CLOUDFLARE_ACCOUNT_ID || has CF_ACCOUNT_ID) && echo found || echo '**NOT FOUND**') |"
+            echo "| CLOUDFLARE_API_TOKEN (or CF_API_TOKEN) | $( (has CLOUDFLARE_API_TOKEN || has CF_API_TOKEN) && echo found || echo '**NOT FOUND**') |"
+            echo "| GROQ_API_KEY (optional) | $(state GROQ_API_KEY) |"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: What went wrong (the lines that matter, as annotations)
         if: failure()
         run: |

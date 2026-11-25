@@ -80,6 +80,22 @@ test('missing credentials: both names are listed (never values), and nothing is 
   assert.match(detail(one, 'credentials'), /^CLOUDFLARE_API_TOKEN is missing/);
 });
 
+test('missing credentials inside GitHub Actions: a direct link to the right page, the accepted spellings, what does not work, and a line in Persian', async () => {
+  const w = world();
+  const inActions = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'someone/some-repo' };
+  const text = detail(await runChecks({ env: inActions, fetch: w.fetch, ...quick }), 'credentials');
+  assert.match(text, /https:\/\/github\.com\/someone\/some-repo\/settings\/secrets\/actions/);
+  assert.match(text, /REPOSITORY secret/);
+  assert.match(text, /CF_ACCOUNT_ID and CF_API_TOKEN are accepted as well/);
+  assert.match(text, /Variable, a Codespaces secret or a Dependabot secret does not work/);
+  assert.match(text, /فارسی: .*Repository secrets/);
+  // on somebody's own computer the shorter spellings are NOT accepted by this script, so they are not advertised, and there is no repository to link to
+  const local = detail(await runChecks({ env: {}, fetch: w.fetch, ...quick }), 'credentials');
+  assert.ok(!/CF_ACCOUNT_ID/.test(local) && !/github\.com\//.test(local));
+  assert.match(local, /GitHub → Settings → Secrets and variables → Actions/);
+  assert.equal(w.seen.length, 0);
+});
+
 test('malformed credentials are named without being repeated: a short or non-hex account id, a token with spaces', async () => {
   const w = world();
   const badId = await runChecks({ env: env({ CLOUDFLARE_ACCOUNT_ID: 'my-account' }), fetch: w.fetch, ...quick });

@@ -54,8 +54,9 @@ Workers AI همچنان زیرساخت اصلی است. Groq سرویس دوم �
 
 ۳. **توکن API:** [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) ← Create Token ← قالب **Edit Cloudflare Workers** ← Use template. این قالب (طبق فهرست رسمی Cloudflare) دسترسی‌های Workers Scripts، Workers R2 Storage و Account Settings را دارد ولی **D1 را ندارد**؛ پس یک ردیف دسترسی دیگر اضافه کنید (دکمهٔ «+ Add more»): Account ← **D1** ← **Edit**. در «Account Resources» همان حساب خودتان را انتخاب کنید ← Continue to summary ← Create Token. مقدار توکن **فقط یک بار** نشان داده می‌شود؛ همان لحظه کپی کنید.
 
-۴. در GitHub: مخزن ← Settings ← Secrets and variables ← Actions ← New repository secret، دو مورد:
-   `CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN`. (توکن را هرگز در خود مخزن یا چت ننویسید.) اسم‌ها باید **دقیقاً** همین باشند.
+۴. در GitHub: مخزن ← Settings ← Secrets and variables ← Actions ← New repository secret ([لینک مستقیم: github.com/amingangmanatgh2-hash/ck-jigar/settings/secrets/actions](https://github.com/amingangmanatgh2-hash/ck-jigar/settings/secrets/actions))، دو مورد:
+   `CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN`. (توکن را هرگز در خود مخزن یا چت ننویسید.) اسم‌ها باید **دقیقاً** همین باشند؛ دو اسم کوتاه‌تر `CF_ACCOUNT_ID` و `CF_API_TOKEN` هم پذیرفته می‌شوند (اگر هر دو اسم باشند، اسم بلند برنده است).
+   باید از نوع **Repository secret** باشند؛ «Variables»، «Codespaces» و «Dependabot» جداست و workflow آن‌ها را نمی‌بیند. اگر چیزی به workflow نرسد، اجرا در پیش‌آزمون می‌ایستد و **اسم** Secretهایی که workflow می‌بیند را (فقط اسم، هرگز مقدار) در Summary و در یک هشدار می‌نویسد؛ از روی همان معلوم می‌شود اسم را اشتباه نوشته‌اید یا جای دیگری گذاشته‌اید.
    مورد سوم **اختیاری** است: `GROQ_API_KEY` ([بخش Groq](#groq-سرویس-هوش-مصنوعی-دوم-اختیاری) پایین).
 
 ۵. فایل `apps/api/wrangler.jsonc` را در GitHub باز کنید (آیکن مداد) و خطِ `"ADMIN_USERNAMES": ""` را پیدا کنید؛ نام را **بین دو نقل‌قولِ خالی** بگذارید، مثلاً `"ADMIN_USERNAMES": "my_boss_2027"` (حروف انگلیسی، عدد و `_`؛ رزروها مجاز نیستند) و Commit کنید.
@@ -179,6 +180,7 @@ npm run dev:web            # Vite روی ‎:5173، /api را به Worker محل
 | خطای ۱۰۲۷ | سقف ۱۰۰٬۰۰۰ درخواست در روز در پلن رایگان |
 | `AI_NOT_CONNECTED` | نه بایندینگ `AI` هست و نه `GROQ_API_KEY` (حالت offline، یا wrangler.jsonc دست‌کاری شده) |
 | مدل «در دسترس نیست» با دلیل `check_failed` یا `unverified` | یک مدل خطا داده (۲۰ دقیقه کنار می‌رود) یا هنوز بررسی نشده؛ دکمهٔ بررسی را بزنید. اگر همیشه شکست می‌خورد، به `npm run verify:ai` نگاه کنید |
+| Preflight: «✗ Cloudflare credentials … are missing» و زیرش «Secrets this run can see: none» | Secret را در جای دیگری ساخته‌اید (باید Repository secret همین مخزن باشد؛ لینک در بالا). اگر چند اسم دیگر را می‌بیند، اسم‌ها را با `CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN` (یا `CF_ACCOUNT_ID` و `CF_API_TOKEN`) مقایسه کنید؛ یک حرف فرق هم یعنی «پیدا نشد» |
 | Preflight: «✗ D1 database … no D1 right» | توکن دسترسی D1 ندارد: توکن را Edit کنید و یک ردیف اضافه کنید: Account ← D1 ← Edit. (مقدار توکن عوض نمی‌شود.) |
 | Preflight: «✗ R2 file storage … not switched on» | اشتراک R2 فعال نیست (داشبورد ← Storage & databases ← R2 ← Overview ← خرید) |
 | Preflight: «✗ Workers … different account» | `CLOUDFLARE_ACCOUNT_ID` مال حساب دیگری است یا توکن «Workers Scripts: Edit» ندارد |

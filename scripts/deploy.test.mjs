@@ -345,11 +345,46 @@ test('Groq: --dry-run only describes the step, runs nothing and prints no key', 
 test('the deploy workflow hands the key to the deploy step and prints it nowhere', () => {
   const text = readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
   assert.match(text, /GROQ_API_KEY: \$\{\{ secrets\.GROQ_API_KEY \}\}/);
-  // the only places a secret may appear are `env:` entries — never inside a shell command, where it could be echoed. Two forms: the value
-  // itself, or the yes/no answer to "does the secret exist?" (`!= ''`), which carries no value.
+  // the only places a secret may appear are `env:` entries — never inside a shell command, where it could be echoed. Three forms: the value
+  // itself, the value with a second accepted spelling of the name (`a || b`: the first that exists wins), or the yes/no answer to
+  // "does the secret exist?" (`!= ''`), which carries no value.
   for (const line of text.split('\n')) {
-    if (/\$\{\{ *secrets\./.test(line)) assert.match(line, /^\s+[A-Z_]+: \$\{\{ secrets\.[A-Z_]+( != '')? \}\}\s*$/, `secret used outside an env entry: ${line}`);
+    if (/\$\{\{ *secrets\./.test(line)) assert.match(line, /^\s+[A-Z_]+: \$\{\{ secrets\.[A-Z_]+( != ''| \|\| secrets\.[A-Z_]+)? \}\}\s*$/, `secret used outside an env entry: ${line}`);
   }
+});
+
+const workflowText = () => readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
+/** The text of one step: from its `- name:` line up to the next step. */
+function stepOf(text, startOfName) {
+  const parts = text.split(/\n(?=      - (?:name|uses|run): )/);
+  const hit = parts.filter((p) => p.startsWith(`      - name: ${startOfName}`));
+  assert.equal(hit.length, 1, `exactly one step starts with "${startOfName}"`);
+  return hit[0];
+}
+
+test('the shorter spellings CF_ACCOUNT_ID and CF_API_TOKEN work too, for the preflight and the deployment, and the official names win', () => {
+  const text = workflowText();
+  for (const name of ['Preflight', 'Deploy (build']) {
+    const step = stepOf(text, name);
+    assert.match(step, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \|\| secrets\.CF_ACCOUNT_ID \}\}/);
+    assert.match(step, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \|\| secrets\.CF_API_TOKEN \}\}/);
+  }
+});
+
+test('after a failed preflight the run lists the NAMES of the secrets it sees — only names, only then, and never in a "check" run', () => {
+  const text = workflowText();
+  const step = stepOf(text, 'Which secrets does this run see?');
+  // the whole secrets context is read in this one step and nowhere else
+  assert.equal(text.split('toJSON(secrets)').length - 1, 1);
+  assert.match(step, /\n {10}VISIBLE_SECRETS: \$\{\{ toJSON\(secrets\) \}\}\n/);
+  // …only after the preflight failed (in a "check" run the preflight is skipped, so no secret is read there)
+  assert.match(step, /\n {8}if: failure\(\) && steps\.preflight\.outcome == 'failure'\n/);
+  assert.match(stepOf(text, 'Preflight'), /\n {8}if: steps\.ask\.outputs\.mode == 'deploy'\n/);
+  // …and the script touches the variable once, to take the keys out of it (jq 'keys'): values are never echoed, written or compared
+  const script = step.slice(step.indexOf('run: |'));
+  assert.equal(script.split('VISIBLE_SECRETS').length - 1, 1);
+  assert.match(script, /printf '%s' "\$VISIBLE_SECRETS" \| jq -r 'keys\[\] \| select\(\. != "github_token"\)'/);
+  assert.ok(!/\$\{?VISIBLE_SECRETS\}?\s*>|echo[^\n]*VISIBLE_SECRETS|tee[^\n]*VISIBLE_SECRETS/.test(script));
 });
 
 test('Cloudflare credentials pasted with a line break or spaces are trimmed for the commands that follow, and never printed', () => {
