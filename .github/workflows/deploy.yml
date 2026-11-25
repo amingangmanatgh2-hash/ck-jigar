@@ -5,6 +5,11 @@
 #   CLOUDFLARE_ACCOUNT_ID   your account id (dashboard > Workers & Pages > Account Details > copy button)
 #   CLOUDFLARE_API_TOKEN    My Profile > API Tokens > Create Token > template "Edit Cloudflare Workers" (it has Workers Scripts,
 #                           Workers R2 Storage and Account Settings but NOT D1), then add one more row: Account > D1 > Edit
+#   GROQ_API_KEY            optional: console.groq.com > API Keys > Create. A second AI service, next to Workers AI: it answers quick
+#                           requests first and takes over when Workers AI is busy or its free allowance is spent. Without it the
+#                           service runs on Workers AI alone.
+# The three names must match exactly. Before anything is published a preflight asks Cloudflare and Groq whether everything is in place
+# (token, Workers, D1, R2, Groq) and lists ALL problems at once, with the fix for each; it prints no secret.
 # Also, once: open Workers & Pages in the Cloudflare dashboard so your account has a workers.dev address (it asks you to pick one),
 # subscribe to R2 (Storage & databases > R2 > Overview > checkout; free monthly allowance) and be on the Workers Paid plan.
 # Before the first run, put your own username in "ADMIN_USERNAMES" in apps/api/wrangler.jsonc, and register it as soon as the
@@ -17,7 +22,9 @@
 #
 # The first run creates the D1 database and the R2 bucket. Wrangler looks them up by name, so a re-run or an already existing one is
 # never duplicated. Every later run applies the migrations first and deploys the new code after. Worker secrets (RELAY_SECRET,
-# GOOGLE_*, SEARCH_*) live on Cloudflare, are set once and are not touched here.
+# GOOGLE_*, SEARCH_*) live on Cloudflare, are set once and are not touched here. The exception is GROQ_API_KEY: when the repository
+# secret exists it is stored as the Worker secret of the same name after each deployment (so rotating the key is: change the repository
+# secret, run again); when it does not exist, whatever is stored on Cloudflare stays as it is.
 name: Deploy to Cloudflare
 
 on:
@@ -65,6 +72,16 @@ jobs:
         run: |
           set -o pipefail
           npm run deploy -- --dry-run 2>&1 | tee plan.log
+      - name: Preflight (is everything in place? all problems at once, no secret printed)
+        id: preflight
+        if: steps.ask.outputs.mode == 'deploy'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          set -o pipefail
+          npm run preflight 2>&1 | tee preflight.log
       - name: Tests first (nothing is published when one fails)
         run: |
           set -o pipefail
@@ -75,6 +92,7 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           set -o pipefail
           npm run deploy 2>&1 | tee deploy.log
@@ -96,14 +114,39 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$URL" ]; then echo "::notice title=AMIN CHAT is live::$URL"; fi
+          GROQ_LINES=$(sed -E 's/\x1b\[[0-9;]*m//g' deploy.log | grep -E '^\[deploy\] (WARNING: )?Groq' | cut -c1-400 || true)
+          if [ -n "$GROQ_LINES" ]; then { echo; echo '```'; echo "$GROQ_LINES"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
       - name: Check that it answers like AMIN CHAT
         if: success() && steps.ask.outputs.mode == 'deploy' && (inputs.smoke_url != '' || steps.address.outputs.url != '')
         env:
           TARGET: ${{ inputs.smoke_url || steps.address.outputs.url }}
+          GROQ_PROVIDED: ${{ secrets.GROQ_API_KEY != '' }}
         run: |
           # a new workers.dev address can take a minute to become reachable
           for i in $(seq 1 12); do
-            if curl -fsS "${TARGET%/}/api/health" | tee health.json | grep -q '"service":"amin-chat"'; then echo; echo "OK: ${TARGET%/}/api/health"; exit 0; fi
+            if curl -fsS "${TARGET%/}/api/health" | tee health.json | grep -q '"service":"amin-chat"'; then
+              echo; echo "OK: ${TARGET%/}/api/health"
+              # which AI services does the live service have credentials for? (yes/no only; whether a model really answers is what
+              # "Models & usage > Check availability" finds out after signing in)
+              if [ "$GROQ_PROVIDED" = "true" ]; then
+                for j in 1 2 3; do [ "$(jq -r '.ai.groq' health.json 2>/dev/null)" = "true" ] && break; sleep 5; curl -fsS "${TARGET%/}/api/health" > health.json || true; done
+              fi
+              WAI=$(jq -r '.ai["workers-ai"]' health.json 2>/dev/null || echo unknown)
+              GROQ=$(jq -r '.ai.groq' health.json 2>/dev/null || echo unknown)
+              echo "AI services with credentials on the live service: Workers AI=$WAI, Groq=$GROQ"
+              {
+                echo
+                echo "| AI service | connected |"
+                echo "|---|---|"
+                echo "| Cloudflare Workers AI | $WAI |"
+                echo "| Groq | $GROQ |"
+                echo
+                echo "\"connected\" means the service has credentials. Whether each model really answers is found out by the real test requests of **Models & usage → Check availability** (administrator)."
+              } >> "$GITHUB_STEP_SUMMARY"
+              [ "$WAI" = "true" ] || echo "::warning title=Workers AI::the live service has no Workers AI binding, so the main AI service is missing"
+              if [ "$GROQ_PROVIDED" = "true" ] && [ "$GROQ" != "true" ]; then echo "::warning title=Groq::GROQ_API_KEY exists as a repository secret, but the live service does not show Groq as connected (see the Groq line of the deploy step)"; fi
+              exit 0
+            fi
             echo "not ready yet (attempt $i of 12)"; sleep 10
           done
           echo "::error::${TARGET%/}/api/health did not answer like AMIN CHAT"; exit 1
@@ -120,5 +163,6 @@ jobs:
           }
           clean() { sed -E 's/\x1b\[[0-9;]*m//g' "$1" 2>/dev/null; }
           if [ -s deploy.log ]; then say "Deploy failed" "$(clean deploy.log | grep -E '✘|ERROR|Error|error|failed|nobody can register|Could not ask|WARNING' | head -n 8 | cut -c1-300 | tr '\n' '|')"; fi
+          if [ -s preflight.log ] && ! [ -s test.log ]; then say "Nothing was published" "The preflight found problems: each one is its own annotation above, with the fix. Fix them (or the secrets), then run again."; fi
           if [ -s test.log ] && ! [ -s deploy.log ]; then say "Tests failed" "$(clean test.log | grep -E 'FAIL |not ok |AssertionError|Tests +[0-9]+ failed' | head -n 8 | cut -c1-300 | tr '\n' '|')"; fi
-          if [ -s plan.log ] && ! [ -s test.log ]; then say "The plan was refused" "$(clean plan.log | grep -E 'ADMIN_USERNAMES|nobody can register|Nothing was' | head -n 4 | cut -c1-400 | tr '\n' '|')"; fi
+          if [ -s plan.log ] && ! [ -s test.log ] && ! [ -s preflight.log ]; then say "The plan was refused" "$(clean plan.log | grep -E 'ADMIN_USERNAMES|nobody can register|Nothing was' | head -n 4 | cut -c1-400 | tr '\n' '|')"; fi

@@ -20,6 +20,7 @@
     "dev:api": "node scripts/dev-api.mjs",
     "dev:web": "npm run dev -w @aminchat/web",
     "deploy": "node scripts/deploy.mjs",
+    "preflight": "node scripts/preflight.mjs",
     "db:migrate:local": "npm run db:migrate:local -w @aminchat/api",
     "db:migrate:remote": "npm run db:migrate:remote -w @aminchat/api",
     "verify:ai": "node scripts/verify-workers-ai.mjs",

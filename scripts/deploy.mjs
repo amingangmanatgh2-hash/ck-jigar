@@ -11,6 +11,11 @@
  * Which of the two applies is asked from Cloudflare (`wrangler d1 list`), not guessed from the config file: in CI Wrangler
  * never writes the ids back, and it finds the database by its name anyway. A "database_id" in wrangler.jsonc is optional.
  *
+ * Groq (optional, a second AI service next to Workers AI): when GROQ_API_KEY is in the environment, it is stored as the Worker secret
+ * of the same name AFTER the Worker exists. It travels only through the environment and the standard input of `wrangler secret put`:
+ * never a command-line argument, never a file, never printed. Without the variable nothing about Groq is touched — a key stored
+ * earlier stays, and the service simply runs on Workers AI alone.
+ *
  * `--skip-build` reuses apps/web/dist. `--dry-run` prints the plan without running anything or contacting Cloudflare.
  */
 import { spawnSync } from 'node:child_process';
@@ -98,9 +103,61 @@ export function parseDatabaseNames(stdout) {
   return list.map((d) => d?.name).filter((n) => typeof n === 'string');
 }
 
+/** Name of the Worker secret, and of the environment variable it is read from. */
+export const GROQ_SECRET = 'GROQ_API_KEY';
+
+/** Never lets a secret's value reach a log: every occurrence in `text` becomes ***. */
+export const redact = (text, value) => (value ? String(text ?? '').split(value).join('***') : String(text ?? ''));
+
+/**
+ * The key from the environment, ready to store — or why it will not be.
+ *   { state: 'none' }                      no key given (GitHub passes an empty string for a secret that does not exist)
+ *   { state: 'broken', problem }           something inside the value that no real key has (spaces, line breaks, quotes)
+ *   { state: 'ready', key, unusual? }      store it; `unusual` = it does not start with gsk_ (Groq's usual prefix) — a hint, not a refusal
+ * Whitespace around the value is the commonest copy-and-paste accident, so it is trimmed rather than reported.
+ */
+export function inspectGroqKey(env) {
+  const raw = typeof env?.[GROQ_SECRET] === 'string' ? env[GROQ_SECRET].trim() : '';
+  if (!raw) return { state: 'none' };
+  if (/\s/.test(raw)) return { state: 'broken', problem: 'it contains spaces or line breaks inside the value' };
+  if (/^["'`]|["'`]$/.test(raw)) return { state: 'broken', problem: 'it is wrapped in quotation marks (paste the key itself, without them)' };
+  if (/[^\x21-\x7e]/.test(raw)) return { state: 'broken', problem: 'it contains characters that no API key has' };
+  return { state: 'ready', key: raw, unusual: !raw.startsWith('gsk_') };
+}
+
+/**
+ * Stores GROQ_API_KEY as the Worker's secret. Returns 'stored' | 'skipped' | 'failed'. It never throws and never fails the deployment:
+ * the Worker is already live and works without Groq, so a problem here is a warning (an annotation on GitHub) that says what to do.
+ */
+export function storeGroqSecret({ env, capture, log, warn, cwd }) {
+  const found = inspectGroqKey(env);
+  if (found.state === 'none') {
+    log(`[deploy] Groq: ${GROQ_SECRET} is not set, so nothing about Groq was changed. (To turn Groq on, add the repository secret ${GROQ_SECRET} and run this again. A key stored earlier stays in place.)`);
+    return 'skipped';
+  }
+  if (found.state === 'broken') {
+    warn(`Groq: ${GROQ_SECRET} was NOT stored because ${found.problem}. Paste the key again; it starts with gsk_. The Worker runs on Workers AI alone until then.`);
+    return 'skipped';
+  }
+  if (found.unusual) log('[deploy] Groq: the key does not start with gsk_ (Groq keys normally do). Storing it anyway; the Models page will show if Groq rejects it.');
+  let answer;
+  try {
+    answer = capture('npx', ['wrangler', 'secret', 'put', GROQ_SECRET], cwd, found.key);
+  } catch (err) {
+    answer = { status: 1, stdout: '', stderr: String(err?.message ?? err) };
+  }
+  if (answer.status !== 0) {
+    const why = redact(describeFailure(answer.stderr, answer.stdout) || `exit ${answer.status}`, found.key);
+    warn(`Groq: the Worker is live, but ${GROQ_SECRET} could not be stored (${why}). The Worker runs on Workers AI alone. Run this again, or on your computer: npx wrangler secret put ${GROQ_SECRET}`);
+    return 'failed';
+  }
+  log(`[deploy] Groq: the key was stored as the Worker secret ${GROQ_SECRET} (its value is not shown anywhere). Groq is now the first to answer quick requests.`);
+  return 'stored';
+}
+
 const defaultRun = (cmd, args, cwd) => spawnSync(cmd, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' }).status ?? 1;
-const defaultCapture = (cmd, args, cwd) => {
-  const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', shell: process.platform === 'win32' });
+const defaultCapture = (cmd, args, cwd, input) => {
+  const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', input, shell: process.platform === 'win32' });
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 };
 /** The line of wrangler's output that explains a failure: colours removed, the first line that says "error" (else the first line). */
@@ -113,6 +170,14 @@ export function describeFailure(...texts) {
 export function main({ argv = process.argv.slice(2), run = defaultRun, capture = defaultCapture, readText = (p) => readFileSync(p, 'utf8'), log = console.log, env = process.env } = {}) {
   const skipBuild = argv.includes('--skip-build');
   const dry = argv.includes('--dry-run');
+  // A credential pasted with a line break or spaces around it is the commonest accident, and Cloudflare answers it with an unhelpful
+  // message. Trim it in place: the commands started below inherit this environment (the values themselves are never printed).
+  for (const name of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']) {
+    if (typeof env[name] === 'string' && env[name] !== env[name].trim()) {
+      env[name] = env[name].trim();
+      log(`[deploy] ${name} had spaces or a line break around it (a copy-and-paste accident); it was trimmed.`);
+    }
+  }
   const configText = readText(`${apiDir}wrangler.jsonc`);
   let plan = planDeploy(configText);
 
@@ -153,6 +218,7 @@ export function main({ argv = process.argv.slice(2), run = defaultRun, capture =
   const deploy = { name: 'deploy the Worker', cmd: 'npx', args: ['wrangler', 'deploy'], cwd: apiDir };
   steps.push(...(plan.order === 'migrate-first' ? [migrate, deploy] : [deploy, migrate]));
 
+  const groq = inspectGroqKey(env);
   log(`[deploy] ${plan.why}`);
   if (plan.order === 'undecided') log('[deploy] (dry run: the steps below are in first-deployment order)');
   for (const [i, s] of steps.entries()) {
@@ -163,6 +229,11 @@ export function main({ argv = process.argv.slice(2), run = defaultRun, capture =
       log(`[deploy] "${s.name}" failed (exit ${code}). Nothing after it was run.`);
       return code;
     }
+  }
+  if (dry) {
+    log(groq.state === 'ready' ? `[deploy] then: store ${GROQ_SECRET} as a Worker secret (npx wrangler secret put ${GROQ_SECRET}, the value comes from the environment and is never printed)` : `[deploy] Groq: no usable ${GROQ_SECRET} in the environment, so Groq would be left alone`);
+  } else {
+    storeGroqSecret({ env, capture, log, warn, cwd: apiDir });
   }
   if (!dry && plan.order === 'deploy-first') {
     log(`[deploy] First deployment finished. From now on the database "${DB_NAME}" is found by its name and migrated before each deploy; saving its id in wrangler.jsonc is optional.`);

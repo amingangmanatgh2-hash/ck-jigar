@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { RESERVED_USERNAMES, USERNAME_PATTERN, checkAdminUsernames, describeFailure, main, parseDatabaseNames, parseJsonc, planDeploy } from './deploy.mjs';
+import { GROQ_SECRET, RESERVED_USERNAMES, USERNAME_PATTERN, checkAdminUsernames, describeFailure, inspectGroqKey, main, parseDatabaseNames, parseJsonc, planDeploy, redact, storeGroqSecret } from './deploy.mjs';
 
 const unpinned = `{
   // comment with "quotes" and a url http://x
@@ -19,16 +19,23 @@ const MIGRATE = 'npx wrangler d1 migrations apply amin-chat-db --remote';
 const listing = (...names) => JSON.stringify(names.map((name, i) => ({ uuid: `uuid-${i}`, name, created_at: '2026-11-01T00:00:00Z', version: 'production', num_tables: 3 })), null, 2);
 
 /** Runs main() against fakes and returns what happened, in order. */
-function drive({ argv = [], config = unpinned, answer = { status: 0, stdout: listing(), stderr: '' }, exitCodes = {}, env = {} } = {}) {
+function drive({ argv = [], config = unpinned, answer = { status: 0, stdout: listing(), stderr: '' }, exitCodes = {}, env = {}, secretAnswer = { status: 0, stdout: 'Success! Uploaded secret GROQ_API_KEY', stderr: '' } } = {}) {
   const events = [];
   const logs = [];
+  const secrets = [];
   const code = main({
     argv,
     env,
     readText: () => config,
     log: (m) => logs.push(m),
-    capture: (cmd, args) => {
-      events.push(`ask: ${cmd} ${args.join(' ')}`);
+    capture: (cmd, args, cwd, input) => {
+      const line = `${cmd} ${args.join(' ')}`;
+      if (args[0] === 'wrangler' && args[1] === 'secret') {
+        events.push(`secret: ${line}`);
+        secrets.push({ line, cwd, input });
+        return typeof secretAnswer === 'function' ? secretAnswer(input) : secretAnswer;
+      }
+      events.push(`ask: ${line}`);
       return answer;
     },
     run: (cmd, args) => {
@@ -37,7 +44,7 @@ function drive({ argv = [], config = unpinned, answer = { status: 0, stdout: lis
       return exitCodes[line] ?? 0;
     },
   });
-  return { code, events, logs: logs.join('\n') };
+  return { code, events, secrets, logs: logs.join('\n') };
 }
 
 test('parses JSONC with comments, trailing commas and comment markers inside strings', () => {
@@ -204,4 +211,157 @@ test('an empty ADMIN_USERNAMES only warns (and becomes an annotation on GitHub);
   const mixed = drive({ config: withAdmins('admin, my_boss') });
   assert.equal(mixed.code, 0, 'one usable name is enough to deploy');
   assert.match(mixed.logs, /WARNING: these ADMIN_USERNAMES entries can never be registered and do nothing: admin/);
+});
+
+
+/* ------------------------------------------------------------------------------------------------ Groq: the second AI service */
+
+const KEY = 'gsk_UnitTestKey0123456789abcdefghijklmnop';
+const SECRET_PUT = 'secret: npx wrangler secret put GROQ_API_KEY';
+
+test('inspectGroqKey: nothing, a usable key (trimmed), an unusual one, and values no key can be', () => {
+  assert.deepEqual(inspectGroqKey({}), { state: 'none' });
+  assert.deepEqual(inspectGroqKey({ GROQ_API_KEY: '' }), { state: 'none' }, 'GitHub passes an empty string for a secret that does not exist');
+  assert.deepEqual(inspectGroqKey({ GROQ_API_KEY: ' \n\t ' }), { state: 'none' });
+  assert.deepEqual(inspectGroqKey({ GROQ_API_KEY: `  ${KEY}\r\n` }), { state: 'ready', key: KEY, unusual: false }, 'the usual copy-paste accident is trimmed, not reported');
+  assert.deepEqual(inspectGroqKey({ GROQ_API_KEY: 'abc123' }), { state: 'ready', key: 'abc123', unusual: true });
+  for (const value of ['gsk_abc def', 'gsk_abc\ndef', `"${KEY}"`, `'${KEY}'`, 'gsk_ключ']) {
+    assert.equal(inspectGroqKey({ GROQ_API_KEY: value }).state, 'broken', JSON.stringify(value));
+  }
+  assert.equal(inspectGroqKey(undefined).state, 'none');
+  assert.equal(inspectGroqKey({ GROQ_API_KEY: 42 }).state, 'none');
+});
+
+test('redact removes every occurrence of a secret from a text, and is harmless without one', () => {
+  assert.equal(redact(`bad ${KEY} and again ${KEY}`, KEY), 'bad *** and again ***');
+  assert.equal(redact('nothing here', KEY), 'nothing here');
+  assert.equal(redact('text', ''), 'text');
+  assert.equal(redact(undefined, KEY), '');
+});
+
+test('Groq: without a key nothing about Groq is touched, and the log says how to turn it on', () => {
+  for (const env of [{}, { GROQ_API_KEY: '' }]) {
+    const r = drive({ env, answer: { status: 0, stdout: listing('amin-chat-db'), stderr: '' } });
+    assert.equal(r.code, 0);
+    assert.ok(!r.events.some((e) => e.startsWith('secret:')), 'no secret command is run');
+    assert.match(r.logs, /Groq: GROQ_API_KEY is not set, so nothing about Groq was changed/);
+    assert.match(r.logs, /A key stored earlier stays in place/);
+  }
+});
+
+test('Groq: the key is stored AFTER the Worker exists (first deployment: after deploy and migrate; later: after both)', () => {
+  const first = drive({ env: { GROQ_API_KEY: KEY } }); // no database yet
+  assert.equal(first.code, 0);
+  assert.deepEqual(first.events, [`ask: ${LIST_CMD}`, BUILD, DEPLOY, MIGRATE, SECRET_PUT]);
+  const later = drive({ env: { GROQ_API_KEY: KEY }, answer: { status: 0, stdout: listing('amin-chat-db'), stderr: '' } });
+  assert.deepEqual(later.events, [`ask: ${LIST_CMD}`, BUILD, MIGRATE, DEPLOY, SECRET_PUT]);
+  assert.match(later.logs, /the key was stored as the Worker secret GROQ_API_KEY/);
+  assert.ok(first.secrets[0].cwd.endsWith('apps/api/'), 'it runs where wrangler.jsonc is, so the right Worker is meant');
+});
+
+test('Groq: the key reaches wrangler only on its standard input — never in an argument, an event or a log line', () => {
+  const r = drive({ env: { GROQ_API_KEY: `  ${KEY}\n` }, answer: { status: 0, stdout: listing('amin-chat-db'), stderr: '' } });
+  assert.equal(r.code, 0);
+  assert.equal(r.secrets.length, 1);
+  assert.equal(r.secrets[0].input, KEY, 'exactly the key: trimmed, no line break added');
+  assert.ok(!r.events.join('\n').includes(KEY), 'not in any command line');
+  assert.ok(!r.logs.includes(KEY), 'not in the log');
+  assert.ok(!r.logs.includes('UnitTestKey'), 'not even a part of it');
+});
+
+test('Groq: a broken key is not stored and does not fail the deployment — it warns, and says what to do', () => {
+  for (const [value, words] of [
+    ['gsk_abc def', /contains spaces or line breaks/],
+    [`"${KEY}"`, /wrapped in quotation marks/],
+  ]) {
+    const r = drive({ env: { GROQ_API_KEY: value, GITHUB_ACTIONS: 'true' }, answer: { status: 0, stdout: listing('amin-chat-db'), stderr: '' } });
+    assert.equal(r.code, 0, 'the Worker is live and works without Groq');
+    assert.ok(!r.events.some((e) => e.startsWith('secret:')));
+    assert.match(r.logs, words);
+    assert.match(r.logs, /::warning title=AMIN CHAT::Groq: GROQ_API_KEY was NOT stored/);
+    assert.ok(!r.logs.includes(value.replace(/"/g, '')), 'the broken value is not repeated back either');
+  }
+});
+
+test('Groq: an unusual-looking key is still stored, with a hint', () => {
+  const r = drive({ env: { GROQ_API_KEY: 'abc123-not-a-groq-prefix' }, answer: { status: 0, stdout: listing('amin-chat-db'), stderr: '' } });
+  assert.equal(r.secrets.length, 1);
+  assert.match(r.logs, /does not start with gsk_/);
+});
+
+test('Groq: when storing fails the deployment still counts as done, the warning says the Worker is live, and nothing leaks even if wrangler echoes the key', () => {
+  const r = drive({
+    env: { GROQ_API_KEY: KEY, GITHUB_ACTIONS: 'true' },
+    answer: { status: 0, stdout: listing('amin-chat-db'), stderr: '' },
+    secretAnswer: (input) => ({ status: 1, stdout: '', stderr: `\u001b[31m✘ [ERROR] Authentication error [code: 10000] while sending ${input}\u001b[0m` }),
+  });
+  assert.equal(r.code, 0);
+  assert.match(r.logs, /::warning title=AMIN CHAT::Groq: the Worker is live, but GROQ_API_KEY could not be stored \(✘ \[ERROR\] Authentication error \[code: 10000\] while sending \*\*\*\)/);
+  assert.match(r.logs, /Workers AI alone/);
+  assert.ok(!r.logs.includes(KEY));
+  assert.ok(!r.logs.includes('UnitTestKey'));
+});
+
+test('Groq: a wrangler that cannot even be started is handled the same way', () => {
+  const logs = [];
+  const warnings = [];
+  const result = storeGroqSecret({
+    env: { GROQ_API_KEY: KEY },
+    capture: () => {
+      throw new Error(`spawn npx ENOENT (${KEY})`);
+    },
+    log: (m) => logs.push(m),
+    warn: (m) => warnings.push(m),
+    cwd: '/x',
+  });
+  assert.equal(result, 'failed');
+  assert.equal(warnings.length, 1);
+  assert.ok(!warnings[0].includes(KEY));
+});
+
+test('Groq: nothing is stored when the deployment itself failed (the Worker may not exist)', () => {
+  const failedDeploy = drive({ env: { GROQ_API_KEY: KEY }, exitCodes: { [DEPLOY]: 1 } });
+  assert.equal(failedDeploy.code, 1);
+  assert.ok(!failedDeploy.events.some((e) => e.startsWith('secret:')));
+  const failedMigration = drive({ env: { GROQ_API_KEY: KEY }, exitCodes: { [MIGRATE]: 1 } });
+  assert.equal(failedMigration.code, 1);
+  assert.ok(!failedMigration.events.some((e) => e.startsWith('secret:')));
+  const failedBuild = drive({ env: { GROQ_API_KEY: KEY }, exitCodes: { [BUILD]: 2 } });
+  assert.equal(failedBuild.code, 2);
+  assert.ok(!failedBuild.events.some((e) => e.startsWith('secret:')));
+});
+
+test('Groq: --dry-run only describes the step, runs nothing and prints no key', () => {
+  const withKey = drive({ argv: ['--dry-run'], env: { GROQ_API_KEY: KEY } });
+  assert.equal(withKey.code, 0);
+  assert.deepEqual(withKey.events, []);
+  assert.match(withKey.logs, /then: store GROQ_API_KEY as a Worker secret/);
+  assert.ok(!withKey.logs.includes(KEY));
+  const without = drive({ argv: ['--dry-run'] });
+  assert.match(without.logs, /Groq: no usable GROQ_API_KEY in the environment, so Groq would be left alone/);
+  assert.equal(GROQ_SECRET, 'GROQ_API_KEY');
+});
+
+test('the deploy workflow hands the key to the deploy step and prints it nowhere', () => {
+  const text = readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
+  assert.match(text, /GROQ_API_KEY: \$\{\{ secrets\.GROQ_API_KEY \}\}/);
+  // the only places a secret may appear are `env:` entries — never inside a shell command, where it could be echoed. Two forms: the value
+  // itself, or the yes/no answer to "does the secret exist?" (`!= ''`), which carries no value.
+  for (const line of text.split('\n')) {
+    if (/\$\{\{ *secrets\./.test(line)) assert.match(line, /^\s+[A-Z_]+: \$\{\{ secrets\.[A-Z_]+( != '')? \}\}\s*$/, `secret used outside an env entry: ${line}`);
+  }
+});
+
+test('Cloudflare credentials pasted with a line break or spaces are trimmed for the commands that follow, and never printed', () => {
+  const env = { CLOUDFLARE_API_TOKEN: 'cfut_SecretTokenValue123\n', CLOUDFLARE_ACCOUNT_ID: '  c7c787887fc9fab25af0db15ebbf46f5 ' };
+  const r = drive({ env, answer: { status: 0, stdout: listing('amin-chat-db'), stderr: '' } });
+  assert.equal(r.code, 0);
+  assert.equal(env.CLOUDFLARE_API_TOKEN, 'cfut_SecretTokenValue123');
+  assert.equal(env.CLOUDFLARE_ACCOUNT_ID, 'c7c787887fc9fab25af0db15ebbf46f5');
+  assert.match(r.logs, /CLOUDFLARE_API_TOKEN had spaces or a line break around it/);
+  assert.match(r.logs, /CLOUDFLARE_ACCOUNT_ID had spaces or a line break around it/);
+  assert.ok(!r.logs.includes('SecretTokenValue') && !r.logs.includes('c7c787887'));
+  // values that need no trimming are left alone and not mentioned
+  const clean = drive({ env: { CLOUDFLARE_API_TOKEN: 'cfut_x', CLOUDFLARE_ACCOUNT_ID: 'abc' }, answer: { status: 0, stdout: listing('amin-chat-db'), stderr: '' } });
+  assert.ok(!/had spaces/.test(clean.logs));
 });
