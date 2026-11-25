@@ -2,4 +2,4 @@ deploy
 # Line 1 is "check" (run the plan and the tests only; nothing is published) or "deploy" (publish to Cloudflare).
 # A commit that changes this file, on Main or on an arena/* branch, starts the workflow "Deploy to Cloudflare" (.github/workflows/deploy.yml).
 # Line 4 and below are free notes: change them to start another run.
-note: second attempt. If the secrets are still not seen, the run now lists the NAMES of the secrets it can see (never values) so the mismatch is visible.
+note: third attempt. The run says per name whether a secret exists (yes or no, never a value) if the preflight cannot find the Cloudflare secrets.

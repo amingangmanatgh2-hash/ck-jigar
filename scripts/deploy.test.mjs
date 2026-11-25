@@ -371,20 +371,32 @@ test('the shorter spellings CF_ACCOUNT_ID and CF_API_TOKEN work too, for the pre
   }
 });
 
-test('after a failed preflight the run lists the NAMES of the secrets it sees — only names, only then, and never in a "check" run', () => {
+test('GitHub refuses to run a workflow that dumps the whole secrets context ("may be malicious … will not run until someone approves it"), so none does', () => {
+  // This really happened: a step with `toJSON(secrets)` (to list the secret NAMES) made GitHub hold the run back for manual approval.
+  const text = workflowText();
+  assert.ok(!/toJSON\(\s*secrets\s*\)/i.test(text), 'the whole secrets context must not be read');
+  assert.ok(!/secrets\[/.test(text), 'secrets are asked for by name, one by one');
+  assert.ok(!/\benv\b[^\n]*\|\s*(base64|xxd|od)\b|printenv\s*\|/.test(text), 'the environment is not piped anywhere');
+});
+
+test('after a failed preflight the run says, per name, whether a secret exists — a yes or no, never a value — and only then, never in a "check" run', () => {
   const text = workflowText();
   const step = stepOf(text, 'Which secrets does this run see?');
-  // the whole secrets context is read in this one step and nowhere else
-  assert.equal(text.split('toJSON(secrets)').length - 1, 1);
-  assert.match(step, /\n {10}VISIBLE_SECRETS: \$\{\{ toJSON\(secrets\) \}\}\n/);
-  // …only after the preflight failed (in a "check" run the preflight is skipped, so no secret is read there)
+  // only after the preflight failed (in a "check" run the preflight is skipped, so these secrets are not even looked at there)
   assert.match(step, /\n {8}if: failure\(\) && steps\.preflight\.outcome == 'failure'\n/);
   assert.match(stepOf(text, 'Preflight'), /\n {8}if: steps\.ask\.outputs\.mode == 'deploy'\n/);
-  // …and the script touches the variable once, to take the keys out of it (jq 'keys'): values are never echoed, written or compared
-  const script = step.slice(step.indexOf('run: |'));
-  assert.equal(script.split('VISIBLE_SECRETS').length - 1, 1);
-  assert.match(script, /printf '%s' "\$VISIBLE_SECRETS" \| jq -r 'keys\[\] \| select\(\. != "github_token"\)'/);
-  assert.ok(!/\$\{?VISIBLE_SECRETS\}?\s*>|echo[^\n]*VISIBLE_SECRETS|tee[^\n]*VISIBLE_SECRETS/.test(script));
+  // every flag is `S_<NAME>: ${{ secrets.<NAME> != '' }}` for the same NAME: a boolean, which carries no value
+  const flags = [...step.matchAll(/\n {10}S_([A-Z_]+): \$\{\{ secrets\.([A-Z_]+) != '' \}\}/g)];
+  assert.ok(flags.length >= 8, 'the plausible spellings are all asked about');
+  for (const [, a, b] of flags) assert.equal(a, b);
+  assert.equal(step.split('secrets.').length - 1, flags.length, 'secrets appear in nothing but those flags');
+  // the script walks exactly the names that have a flag, and compares each flag with the word true
+  const loop = step.match(/for n in ([A-Z_ ]+); do/);
+  assert.ok(loop, 'the script has its list of names');
+  assert.deepEqual(loop[1].trim().split(/\s+/).sort(), flags.map((f) => f[1]).sort());
+  assert.match(step, /\[ "\$\(printenv "S_\$n"\)" = "true" \]/);
+  // the names the project accepts are all in the list
+  for (const name of ['CLOUDFLARE_ACCOUNT_ID', 'CF_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN', 'CF_API_TOKEN', 'GROQ_API_KEY']) assert.ok(loop[1].split(/\s+/).includes(name), name);
 });
 
 test('Cloudflare credentials pasted with a line break or spaces are trimmed for the commands that follow, and never printed', () => {
