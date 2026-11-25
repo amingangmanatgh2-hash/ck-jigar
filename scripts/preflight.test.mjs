@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { CF_API, GROQ_MODELS_URL, main, renderSummary, runChecks } from './preflight.mjs';
+import { CF_API, GROQ_MODELS_URL, RIGHTS_FIX, TOKEN_ROWS, main, renderSummary, runChecks } from './preflight.mjs';
 
 const ACCOUNT = 'c7c787887fc9fab25af0db15ebbf46f5';
 const TOKEN = 'cfut_UnitTestTokenAbCdEf0123456789xyz';
@@ -149,6 +149,8 @@ test('the commonest first-time problem: a token without D1 → says exactly whic
   assert.match(detail(results, 'd1'), /Account → D1 → Edit/);
   assert.equal(level(results, 'workers'), 'ok');
   assert.equal(level(results, 'r2'), 'ok');
+  // a refused D1 alone is enough to bring the list of rows
+  assert.equal(level(results, 'rights'), 'info');
 });
 
 test('R2 not switched on is told apart from a missing right', async () => {
@@ -164,6 +166,103 @@ test('R2 not switched on is told apart from a missing right', async () => {
   const noRight = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/r2/buckets`]: () => cfErr(403, 10000, 'Authentication error') }).fetch, ...quick });
   assert.equal(level(noRight, 'r2'), 'fail');
   assert.match(detail(noRight, 'r2'), /Workers R2 Storage → Edit/);
+  assert.equal(level(noRight, 'rights'), 'info', 'a refused R2 alone brings the list of rows');
+});
+
+/** What the first real run against Cloudflare showed: a token that can manage Workers but has no D1 and no R2 row, and cannot read the subdomain. */
+const firstRealRun = () => world({
+  [`/accounts/${ACCOUNT}/d1/database?per_page=100`]: () => cfErr(401, 10000, 'Authentication error'),
+  [`/accounts/${ACCOUNT}/r2/buckets`]: () => cfErr(403, 10000, 'Authentication error'),
+  [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(403, 10000, 'Authentication error'),
+});
+
+test('three refusals with one cause give ONE list of the rows the token needs; what passed stays passed', async () => {
+  const results = await runChecks({ env: env({ GROQ_API_KEY: GROQ }), fetch: firstRealRun().fetch, ...quick });
+  assert.deepEqual(results.map((r) => [r.id, r.level]), [
+    ['credentials', 'ok'], ['token', 'ok'], ['workers', 'ok'], ['d1', 'fail'], ['r2', 'fail'], ['subdomain', 'warn'], ['rights', 'info'], ['groq', 'ok'],
+  ]);
+  assert.equal(results.filter((r) => r.id === 'rights').length, 1);
+  const hint = detail(results, 'rights');
+  assert.equal(hint, RIGHTS_FIX);
+  for (const row of ['Workers Scripts → Edit', 'D1 → Edit', 'Workers R2 Storage → Edit', 'Account Settings → Read']) assert.ok(hint.includes(row), row);
+  assert.match(hint, /https:\/\/dash\.cloudflare\.com\/profile\/api-tokens/);
+  assert.match(hint, /The token text does not change, so the GitHub secret stays as it is/);
+  assert.match(hint, /فارسی: .*Account Settings Read/);
+  // the hint is not a problem to fix by itself: only the failed checks count
+  assert.equal(results.filter((r) => r.level === 'fail').length, 2);
+  // a refused subdomain is a token problem, NOT "open Workers & Pages and choose an address"
+  assert.match(detail(results, 'subdomain'), /the token being refused, not a missing address/);
+  assert.ok(!/Open "Workers & Pages"/.test(detail(results, 'subdomain')));
+});
+
+test('the list of rows is documented where the person reads it (the deployment guide names every one of them)', () => {
+  const guide = readFileSync(new URL('../docs/deploy.md', import.meta.url), 'utf8');
+  assert.deepEqual(TOKEN_ROWS, ['Workers Scripts → Edit', 'D1 → Edit', 'Workers R2 Storage → Edit', 'Account Settings → Read']);
+  for (const row of TOKEN_ROWS) {
+    const [name, right] = row.split(' → ');
+    assert.ok(guide.includes(name), `docs/deploy.md must name the row "${name}"`);
+    assert.ok(new RegExp(`${name}[^\\n]*${right}`).test(guide), `docs/deploy.md must say ${right} for "${name}"`);
+  }
+});
+
+test('no list of rows when nothing was refused: R2 not switched on, an outage, or everything fine', async () => {
+  const off = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/r2/buckets`]: () => cfErr(403, 10042, 'Please enable R2 through the Cloudflare Dashboard.') }).fetch, ...quick });
+  assert.equal(level(off, 'r2'), 'fail');
+  assert.equal(level(off, 'rights'), undefined);
+  // a 5xx that does not clear up is "unexpected", not "the token has no right"
+  const down = await runChecks({
+    env: env(),
+    fetch: world({ [`/accounts/${ACCOUNT}/d1/database?per_page=100`]: () => cfErr(500, 1, 'boom'), [`/accounts/${ACCOUNT}/r2/buckets`]: () => cfErr(502, 1, 'bad gateway') }).fetch,
+    ...quick,
+  });
+  for (const id of ['d1', 'r2']) {
+    assert.equal(level(down, id), 'fail');
+    assert.match(detail(down, id), /Cloudflare answered unexpectedly \(HTTP 50[02]/);
+    assert.ok(!/no D1 right|cannot be used with this token/.test(detail(down, id)));
+  }
+  assert.equal(level(down, 'rights'), undefined);
+  const good = await runChecks({ env: env(), fetch: world().fetch, ...quick });
+  assert.equal(level(good, 'rights'), undefined);
+  // the refusal of the account (a wrong id looks like one) also brings the list: it is the other cause
+  const wrongAccount = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/scripts`]: () => cfErr(403, 10000, 'Authentication error') }).fetch, ...quick });
+  assert.equal(level(wrongAccount, 'rights'), 'info');
+});
+
+test('main in GitHub: the hint is a warning, and ONE overview line says what passed (with the details), what was skipped, what failed and what only warns', async () => {
+  const logs = [];
+  const code = await main({ env: env({ GITHUB_ACTIONS: 'true', GROQ_API_KEY: GROQ }), fetch: firstRealRun().fetch, log: (m) => logs.push(m), summaryFile: undefined, ...quick });
+  assert.equal(code, 1);
+  const hint = logs.filter((l) => l.startsWith('::warning title=Preflight: Token rights::'));
+  assert.equal(hint.length, 1);
+  assert.match(hint[0], /Workers R2 Storage → Edit/);
+  const overview = logs.filter((l) => l.startsWith('::notice title=Preflight overview::'));
+  assert.equal(overview.length, 1);
+  const line = overview[0];
+  assert.ok(!/[\r\n]/.test(line));
+  assert.match(line, /Passed: Cloudflare credentials \(both are present and look right\); Cloudflare token \(accepted and active\); Workers \(the token can manage Workers on this account\); Groq \(the key works \(2 models are open to it\)\)\./);
+  assert.match(line, /Failed: D1 database, R2 file storage\./);
+  assert.match(line, /Warnings: workers\.dev address\./);
+  assert.ok(!line.includes('Skipped:'), 'nothing was skipped here');
+  // without a Groq key it is "skipped", and says why
+  const bare = [];
+  await main({ env: env({ GITHUB_ACTIONS: 'true' }), fetch: world().fetch, log: (m) => bare.push(m), summaryFile: undefined, ...quick });
+  assert.match(bare.find((l) => l.startsWith('::notice title=Preflight overview::')), /Skipped: Groq \(GROQ_API_KEY is not set/);
+  assert.ok(!bare.some((l) => /Failed:/.test(l)));
+});
+
+test('the overview is only for GitHub, and, like everything else, never carries a credential back', async () => {
+  const plain = [];
+  await main({ env: env({ GROQ_API_KEY: GROQ }), fetch: firstRealRun().fetch, log: (m) => plain.push(m), summaryFile: undefined, ...quick });
+  assert.ok(!plain.join('\n').includes('::'), 'no annotation commands outside GitHub');
+  const logs = [];
+  const echo = world({ groq: () => json({ data: [{ id: 'x' }] }), [`/accounts/${ACCOUNT}/workers/scripts`]: () => cfOk([]) });
+  // a service that puts the token into a message of a passing check must not get it into the overview either
+  const original = echo.fetch;
+  const leaky = async (url, init) => (String(url).endsWith('/workers/subdomain') ? cfOk({ subdomain: `leaks-${TOKEN}` }) : original(url, init));
+  await main({ env: env({ GITHUB_ACTIONS: 'true', GROQ_API_KEY: GROQ }), fetch: leaky, log: (m) => logs.push(m), summaryFile: undefined, ...quick });
+  const everything = logs.join('\n');
+  assert.ok(!everything.includes(TOKEN) && !everything.includes(GROQ));
+  assert.match(everything, /::notice title=Preflight overview::Passed: /);
 });
 
 test('a wrong account id looks like a Workers refusal and says both possible causes', async () => {
@@ -189,6 +288,11 @@ test('no workers.dev address is only a warning (and says what to do)', async () 
   assert.match(detail(none, 'subdomain'), /Open "Workers & Pages"/);
   const empty = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfOk({}) }).fetch, ...quick });
   assert.equal(level(empty, 'subdomain'), 'warn');
+  assert.equal(level(none, 'rights'), undefined, 'a missing address is not a token problem');
+  assert.equal(level(empty, 'rights'), undefined);
+  const refused = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(403, 10000, 'Authentication error') }).fetch, ...quick });
+  assert.equal(level(refused, 'subdomain'), 'warn');
+  assert.equal(level(refused, 'rights'), 'info', 'a refused subdomain alone brings the list of rows');
 });
 
 test('Groq problems never block: a rejected key, a rate limit, an outage and a malformed key all only warn', async () => {

@@ -52,7 +52,18 @@ Workers AI همچنان زیرساخت اصلی است. Groq سرویس دوم �
 
 ۲. **شناسهٔ حساب:** داشبورد Cloudflare ← Workers & Pages ← بخش «Account Details» ← دکمهٔ کپی کنار «Account ID». (یا Ctrl+K را بزنید و Copy account ID را تایپ کنید.)
 
-۳. **توکن API:** [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) ← Create Token ← قالب **Edit Cloudflare Workers** ← Use template. این قالب (طبق فهرست رسمی Cloudflare) دسترسی‌های Workers Scripts، Workers R2 Storage و Account Settings را دارد ولی **D1 را ندارد**؛ پس یک ردیف دسترسی دیگر اضافه کنید (دکمهٔ «+ Add more»): Account ← **D1** ← **Edit**. در «Account Resources» همان حساب خودتان را انتخاب کنید ← Continue to summary ← Create Token. مقدار توکن **فقط یک بار** نشان داده می‌شود؛ همان لحظه کپی کنید.
+۳. **توکن API:** [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) ← Create Token ← قالب **Edit Cloudflare Workers** ← Use template. این قالب (طبق فهرست رسمی Cloudflare) ردیف‌های Workers Scripts، Workers R2 Storage و Account Settings را دارد ولی **D1 را ندارد**؛ پس یک ردیف دیگر اضافه کنید (دکمهٔ «+ Add more»): Account ← **D1** ← **Edit**. در «Account Resources» همان حساب خودتان را انتخاب کنید ← Continue to summary ← Create Token. مقدار توکن **فقط یک بار** نشان داده می‌شود؛ همان لحظه کپی کنید.
+
+   **این چهار ردیف باید در توکن باشد، هر چهار از نوع Account** (اگر توکن را «Custom» ساخته‌اید، دقیقاً همین‌ها):
+
+   | ردیف | سطح | برای چه |
+   |---|---|---|
+   | Workers Scripts | **Edit** | بارگذاری Worker، فایل‌های وب، زمان‌بندی، Secretها |
+   | D1 | **Edit** | ساختن پایگاه داده و اجرای migrationها |
+   | Workers R2 Storage | **Edit** | ساختن و خواندن مخزن فایل `amin-chat-files` |
+   | Account Settings | **Read** | خواندن اطلاعات حساب (مثلاً آدرس workers.dev) |
+
+   **توکن را قبلاً ساخته‌اید و اجرا می‌گوید «Authentication error»؟** نیازی به توکن تازه نیست: [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) ← توکن خودتان ← **Edit** ← با «+ Add more» ردیف‌های کم را اضافه کنید ← Continue to summary ← Update Token. **متن توکن عوض نمی‌شود**، پس Secret در GitHub همان می‌ماند. اجرا خودش فهرست همین ردیف‌ها را در یک هشدار به نام «Preflight: Token rights» می‌دهد.
 
 ۴. **اطلاعات حساب را به GitHub بدهید (ساده‌ترین راه: فقط یک Secret).** [این لینک](https://github.com/amingangmanatgh2-hash/ck-jigar/settings/secrets/actions/new) را باز کنید (یا: مخزن ← Settings ← Secrets and variables ← Actions ← New repository secret). دو خانه دارد:
    - **Name:** `DEPLOY_ENV`
@@ -184,7 +195,7 @@ npm run dev:web            # Vite روی ‎:5173، /api را به Worker محل
 
 | نشانه | علت و راه‌حل |
 |---|---|
-| «Could not ask Cloudflare which databases exist» | توکن غلط/منقضی است، `CLOUDFLARE_ACCOUNT_ID` نیست، یا توکن دسترسی D1 ندارد (قالب Edit Cloudflare Workers + **D1: Edit**). هیچ‌چیز ساخته یا منتشر نشده است |
+| «Could not ask Cloudflare which databases exist» | توکن غلط/منقضی است، `CLOUDFLARE_ACCOUNT_ID` درست نیست، یا توکن یکی از چهار ردیف مرحلهٔ ۳ را ندارد (بیشتر **D1: Edit**). هیچ‌چیز ساخته یا منتشر نشده است |
 | خطای ثبت زیردامنهٔ workers.dev هنگام deploy | یک بار داشبورد ← Workers & Pages را باز کنید و یک زیردامنه انتخاب کنید |
 | خطای دسترسی R2 / «enable R2» | اشتراک R2 باید در حساب فعال باشد (داشبورد ← Storage & databases ← R2 ← Overview ← مراحل خرید؛ ممکن است روش پرداخت بخواهد) و توکن **Workers R2 Storage: Edit** داشته باشد (قالب Edit Cloudflare Workers دارد) |
 | خطای ۱۱۰۲ / «Worker exceeded resource limits» | سقف ۱۰ میلی‌ثانیه CPU در پلن رایگان. هنگام ورود/ثبت‌نام: `PASSWORD_HASH_ITERATIONS` را کمتر کنید (حداقل ۱۰٬۰۰۰؛ پیش‌فرض این مخزن ۲۰٬۰۰۰). هنگام پاسخ‌های بلند هوش مصنوعی، یا اگر کم‌کردن کمک نکرد: به Workers Paid بروید |
@@ -192,7 +203,7 @@ npm run dev:web            # Vite روی ‎:5173، /api را به Worker محل
 | `AI_NOT_CONNECTED` | نه بایندینگ `AI` هست و نه `GROQ_API_KEY` (حالت offline، یا wrangler.jsonc دست‌کاری شده) |
 | مدل «در دسترس نیست» با دلیل `check_failed` یا `unverified` | یک مدل خطا داده (۲۰ دقیقه کنار می‌رود) یا هنوز بررسی نشده؛ دکمهٔ بررسی را بزنید. اگر همیشه شکست می‌خورد، به `npm run verify:ai` نگاه کنید |
 | Preflight: «✗ Cloudflare credentials … are missing» و زیرش «Which secrets this run sees» | Secret ساخته نشده یا جای دیگری ساخته شده (باید Repository secret همین مخزن باشد؛ ساده‌ترین راه: یک Secret به نام `DEPLOY_ENV`، لینک در مرحلهٔ ۴). اگر `DEPLOY_ENV` را ساخته‌اید و باز هم می‌گوید نیست، مرحلهٔ «Read the optional single secret DEPLOY_ENV» در همان اجرا می‌گوید کدام خط را نخوانده (اسم خط، هرگز مقدار). اگر اسم دیگری را (مثلاً `CLOUDFLARE_TOKEN`) پیدا کرده باشد، همان را می‌گوید؛ GitHub اجازهٔ تغییر اسم نمی‌دهد، پس Secret را با اسم درست دوباره بسازید: `CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN` (یا `CF_ACCOUNT_ID` و `CF_API_TOKEN`). یک حرف فرق هم یعنی «پیدا نشد» |
-| Preflight: «✗ D1 database … no D1 right» | توکن دسترسی D1 ندارد: توکن را Edit کنید و یک ردیف اضافه کنید: Account ← D1 ← Edit. (مقدار توکن عوض نمی‌شود.) |
+| Preflight: «✗ D1 database … no D1 right» (یا «R2 … cannot be used with this token»، یا «workers.dev address … the token being refused») و یک هشدار «Token rights» | توکن یک یا چند ردیف از چهار ردیف مرحلهٔ ۳ را ندارد (خطای «Authentication error» با کد ۱۰۰۰۰ یعنی همین). توکن را Edit کنید و ردیف‌های کم را اضافه کنید؛ مقدار توکن عوض نمی‌شود |
 | Preflight: «✗ R2 file storage … not switched on» | اشتراک R2 فعال نیست (داشبورد ← Storage & databases ← R2 ← Overview ← خرید) |
 | Preflight: «✗ Workers … different account» | `CLOUDFLARE_ACCOUNT_ID` مال حساب دیگری است یا توکن «Workers Scripts: Edit» ندارد |
 | Preflight: «! Groq … rejected the key» | کلید Groq غلط یا باطل است؛ کلید تازه بسازید و Secret را عوض کنید. (فقط هشدار است؛ بدون Groq هم deploy می‌شود) |

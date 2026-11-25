@@ -22,10 +22,10 @@ GitHub runs the same on every push and pull request (`.github/workflows/ci.yml`:
 
 | Layer | Files | Tests | Runs on |
 |---|---|---|---|
-| Scripts and relay | 5 | 125 | Node's built-in test runner |
+| Scripts and relay | 5 | 130 | Node's built-in test runner |
 | API (`apps/api/test`) | 16 | 320 | **real workerd** (Cloudflare's own runtime), real SQLite-backed D1, Durable Objects, R2 |
 | Web (`apps/web/test`) | 22 | 239 | jsdom (one file in plain Node for WebCrypto) |
-| **Total** | **43** | **684** | |
+| **Total** | **43** | **689** | |
 
 ## How real is "real"? The three doubles
 
@@ -78,9 +78,9 @@ Many of these are written as attacks, not just happy paths: a second user trying
 | `locales.test.ts` | 8 | Persian has exactly English's keys and placeholders, is really Persian, every error code the API can send has a text in both languages, `dir` and `lang` switch correctly |
 | `e2ee.test.ts`, `session.test.tsx`, `text.test.tsx`, `useStickToBottom.test.tsx` | 7, 6, 6, 5 | WebCrypto round-trips, session handling, text helpers, scroll behaviour |
 
-## Scripts and relay (125 tests)
+## Scripts and relay (130 tests)
 
-`relay/relay.test.mjs` (44: HTTP, WebSocket and direct-HTTPS forwarding, header handling, limits, configuration errors), `scripts/deploy.test.mjs` (39: the migrate-before/after-deploy decision, dry-run, the check that `ADMIN_USERNAMES` names somebody who can really register — including a test that the list of reserved names and the username pattern still match `packages/shared/src/constants.ts` — pasted credentials with a stray line break are trimmed, the **Groq secret step**: the key goes to `wrangler secret put` on standard input only, never in an argument, is redacted from everything printed, a broken key is not stored, a failure to store only warns, and what the deploy workflow may do with secrets: only `env:` entries, the accepted spellings and their order, one flag per name that is a yes or no, never the whole secrets context — GitHub refused to run the workflow when it dumped it —, and the DEPLOY_ENV step that runs only in deploy runs), `scripts/preflight.test.mjs` (21: the pre-deployment check against a stand-in for the Cloudflare and Groq APIs: every problem reported at once with its fix, Groq problems never block, no credential printed or sent to the wrong host, timeouts and a retry, annotations escaped, the message for missing credentials, and that the workflow runs it before the tests and the deployment), `scripts/load-deploy-env.test.mjs` (14: the single `DEPLOY_ENV` secret: the ways people paste lines, the official name wins over its shorter spelling, a line that is not NAME=value is skipped and never shown, credentials are masked before anything is logged or written, nothing but printable ASCII is handed on, the run is never failed by it), `scripts/drive-token.test.mjs` (7).
+`relay/relay.test.mjs` (44: HTTP, WebSocket and direct-HTTPS forwarding, header handling, limits, configuration errors), `scripts/deploy.test.mjs` (39: the migrate-before/after-deploy decision, dry-run, the check that `ADMIN_USERNAMES` names somebody who can really register — including a test that the list of reserved names and the username pattern still match `packages/shared/src/constants.ts` — pasted credentials with a stray line break are trimmed, the **Groq secret step**: the key goes to `wrangler secret put` on standard input only, never in an argument, is redacted from everything printed, a broken key is not stored, a failure to store only warns, and what the deploy workflow may do with secrets: only `env:` entries, the accepted spellings and their order, one flag per name that is a yes or no, never the whole secrets context — GitHub refused to run the workflow when it dumped it —, and the DEPLOY_ENV step that runs only in deploy runs), `scripts/preflight.test.mjs` (26: the pre-deployment check against a stand-in for the Cloudflare and Groq APIs: every problem reported at once with its fix, Groq problems never block, no credential printed or sent to the wrong host, timeouts and a retry, annotations escaped, the message for missing credentials, one list of token rows for several refusals that have one cause, an overview line of what passed, and that the workflow runs it before the tests and the deployment), `scripts/load-deploy-env.test.mjs` (14: the single `DEPLOY_ENV` secret: the ways people paste lines, the official name wins over its shorter spelling, a line that is not NAME=value is skipped and never shown, credentials are masked before anything is logged or written, nothing but printable ASCII is handed on, the run is never failed by it), `scripts/drive-token.test.mjs` (7).
 
 ## Checked by hand in a real browser (not automated in the repository)
 

@@ -15,6 +15,9 @@
  *   not blocking (the service runs without it):
  *     subdomain    the account has a workers.dev address (else the first deploy asks for one)
  *     groq         the optional Groq key works
+ *   a hint, not a check (level "info"):
+ *     rights       added once when Cloudflare answered "Authentication error" to any of the checks above: the whole list of token rows
+ *                  in one place, because the first real run showed three separate refusals that had ONE cause (a token with too few rows)
  *
  * It prints only what happened (names of checks, HTTP statuses, the messages Cloudflare or Groq sent) — never a credential. Everything it
  * prints goes through `redact`, and the values are never put into a message in the first place.
@@ -68,10 +71,19 @@ async function call(fetchFn, sleep, url, token, label) {
   return { error: `${label} could not be reached (${short(last, 120)})` };
 }
 
+/** The rows a token needs for this deployment, as shown in the dashboard ("Permissions": three drop-downs per row). */
+export const TOKEN_ROWS = ['Workers Scripts → Edit', 'D1 → Edit', 'Workers R2 Storage → Edit', 'Account Settings → Read'];
+export const RIGHTS_FIX = `Edit the token once: https://dash.cloudflare.com/profile/api-tokens → your token → Edit. Make sure it has these rows, all of the kind "Account": ${TOKEN_ROWS.join(' · ')}. Save. The token text does not change, so the GitHub secret stays as it is. (فارسی: توکن را یک بار ویرایش کنید؛ این ردیف‌ها باید از نوع Account باشند: Workers Scripts Edit، D1 Edit، Workers R2 Storage Edit، Account Settings Read. متن توکن عوض نمی‌شود و Secret در گیت‌هاب همان می‌ماند.)`;
+/** Cloudflare refuses the token itself (a missing row), as opposed to being down or answering something unexpected. */
+const denied = (x) => x.status === 401 || x.status === 403;
+
 const ok = (id, title, detail) => ({ id, title, level: 'ok', detail });
 const fail = (id, title, detail) => ({ id, title, level: 'fail', detail });
 const warn = (id, title, detail) => ({ id, title, level: 'warn', detail });
 const skip = (id, title, detail) => ({ id, title, level: 'skip', detail });
+const info = (id, title, detail) => ({ id, title, level: 'info', detail });
+/** Marks a result that is a refusal of the token, so that the hint with the list of rows is added. */
+const refused = (result) => ({ ...result, refused: true });
 
 export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() }) {
   const results = [];
@@ -132,13 +144,15 @@ export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep 
 
       if (w.error) results.push(fail('workers', 'Workers', w.error));
       else if (w.status === 200 && w.body?.success !== false) results.push(ok('workers', 'Workers', 'the token can manage Workers on this account'));
-      else results.push(fail('workers', 'Workers', `the token cannot manage Workers on this account (${cfProblem(w.status, w.body)}). Either CLOUDFLARE_ACCOUNT_ID belongs to a different account than the token, or the token lacks "Workers Scripts: Edit" (template "Edit Cloudflare Workers").`));
+      else if (denied(w)) results.push(refused(fail('workers', 'Workers', `the token cannot manage Workers on this account (${cfProblem(w.status, w.body)}). Either CLOUDFLARE_ACCOUNT_ID belongs to a different account than the token, or the token lacks "Workers Scripts: Edit" (template "Edit Cloudflare Workers").`)));
+      else results.push(fail('workers', 'Workers', `Cloudflare answered unexpectedly (${cfProblem(w.status, w.body)}). Run it again; if it repeats, look at cloudflarestatus.com.`));
 
       if (d.error) results.push(fail('d1', 'D1 database', d.error));
       else if (d.status === 200 && d.body?.success !== false) {
         const names = Array.isArray(d.body?.result) ? d.body.result.map((x) => x?.name) : [];
         results.push(ok('d1', 'D1 database', names.includes(D1_NAME) ? `"${D1_NAME}" exists: this is an update, migrations run first` : `the token may use D1; "${D1_NAME}" does not exist yet: the first deployment creates it`));
-      } else results.push(fail('d1', 'D1 database', `the token has no D1 right (${cfProblem(d.status, d.body)}). Edit the token and add one row: Account → D1 → Edit. (The template "Edit Cloudflare Workers" does not include D1.)`));
+      } else if (denied(d)) results.push(refused(fail('d1', 'D1 database', `the token has no D1 right (${cfProblem(d.status, d.body)}). Add the row Account → D1 → Edit. (The template "Edit Cloudflare Workers" does not include D1.)`)));
+      else results.push(fail('d1', 'D1 database', `Cloudflare answered unexpectedly (${cfProblem(d.status, d.body)}). Run it again; if it repeats, look at cloudflarestatus.com.`));
 
       if (r.error) results.push(fail('r2', 'R2 file storage', r.error));
       else if (r.status === 200 && r.body?.success !== false) {
@@ -146,11 +160,16 @@ export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep 
         results.push(ok('r2', 'R2 file storage', buckets.includes('amin-chat-files') ? 'on; the bucket "amin-chat-files" exists' : 'on; the first deployment creates the bucket "amin-chat-files"'));
       } else if (r.body?.errors?.some?.((e) => e?.code === 10042 || /enable R2|R2.*(not|never).*(enabled|activated|subscri)/i.test(String(e?.message)))) {
         results.push(fail('r2', 'R2 file storage', `R2 is not switched on for this account (${cfProblem(r.status, r.body)}). Cloudflare dashboard → Storage & databases → R2 → Overview → subscribe (the monthly free allowance is enough).`));
-      } else results.push(fail('r2', 'R2 file storage', `R2 cannot be used with this token (${cfProblem(r.status, r.body)}). If R2 was never switched on: dashboard → Storage & databases → R2 → Overview → subscribe. Otherwise add Account → Workers R2 Storage → Edit to the token.`));
+      } else if (denied(r)) results.push(refused(fail('r2', 'R2 file storage', `R2 cannot be used with this token (${cfProblem(r.status, r.body)}). If R2 was never switched on: dashboard → Storage & databases → R2 → Overview → subscribe. Otherwise add Account → Workers R2 Storage → Edit to the token.`)));
+      else results.push(fail('r2', 'R2 file storage', `Cloudflare answered unexpectedly (${cfProblem(r.status, r.body)}). Run it again; if it repeats, look at cloudflarestatus.com.`));
 
       if (s.error) results.push(warn('subdomain', 'workers.dev address', s.error));
       else if (s.status === 200 && s.body?.result?.subdomain) results.push(ok('subdomain', 'workers.dev address', 'the account has one'));
+      else if (denied(s)) results.push(refused(warn('subdomain', 'workers.dev address', `could not be read (${cfProblem(s.status, s.body)}). That is the token being refused, not a missing address; the first deployment has to read it to tell you where the service lives.`)));
       else results.push(warn('subdomain', 'workers.dev address', `${s.status === 200 ? 'the account has none yet' : `could not be read (${cfProblem(s.status, s.body)})`}. Open "Workers & Pages" in the Cloudflare dashboard once: it asks you to choose one. Without it the first deployment stops.`));
+
+      // ONE list of rows for all the refusals above (they have one cause: a token with too few rows)
+      if (results.some((x) => x.refused)) results.push(info('rights', 'Token rights', RIGHTS_FIX));
     }
   } else {
     for (const [id, title] of [['token', 'Cloudflare token'], ['workers', 'Workers'], ['d1', 'D1 database'], ['r2', 'R2 file storage']]) results.push(skip(id, title, 'not checked (fix the credentials first)'));
@@ -171,7 +190,7 @@ export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep 
   return results;
 }
 
-const MARK = { ok: '✓', fail: '✗', warn: '!', skip: '–' };
+const MARK = { ok: '✓', fail: '✗', warn: '!', skip: '–', info: 'ℹ' };
 
 export function renderSummary(results) {
   const lines = ['## Preflight', '', '| | Check | Result |', '|---|---|---|'];
@@ -185,13 +204,23 @@ export async function main({ env = process.env, fetch: fetchFn = globalThis.fetc
   const secrets = [env.CLOUDFLARE_API_TOKEN, env.GROQ_API_KEY].map((v) => (typeof v === 'string' ? v.trim() : '')).filter((v) => v.length >= 8);
   const clean = (text) => secrets.reduce((t, s) => redact(t, s), String(text));
   const results = await runChecks({ env, fetch: fetchFn, sleep, now });
+  const inActions = env.GITHUB_ACTIONS === 'true';
+  // one annotation per message, one line, with the characters GitHub treats specially escaped
+  const annotate = (kind, title, text) => log(`::${kind} title=${title}::${clean(text).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}`);
   for (const r of results) {
     log(clean(`[preflight] ${MARK[r.level]} ${r.title} — ${r.detail}`));
-    if (env.GITHUB_ACTIONS === 'true' && (r.level === 'fail' || r.level === 'warn')) {
-      // one annotation per problem, one line, with the characters GitHub treats specially escaped
-      const text = clean(r.detail).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
-      log(`::${r.level === 'fail' ? 'error' : 'warning'} title=Preflight: ${r.title}::${text}`);
-    }
+    if (inActions && (r.level === 'fail' || r.level === 'warn' || r.level === 'info')) annotate(r.level === 'fail' ? 'error' : 'warning', `Preflight: ${r.title}`, r.detail);
+  }
+  if (inActions) {
+    // Annotations are what can be read without opening the log, and passed checks have none of their own: one line says what is fine.
+    const named = (levels, withDetail) => results.filter((r) => levels.includes(r.level)).map((r) => (withDetail ? `${r.title} (${r.detail})` : r.title));
+    const parts = [
+      ['Passed', named(['ok'], true), '; '],
+      ['Skipped', named(['skip'], true), '; '],
+      ['Failed', named(['fail'], false), ', '],
+      ['Warnings', named(['warn'], false), ', '],
+    ].filter(([, list]) => list.length > 0).map(([label, list, joiner]) => `${label}: ${list.join(joiner)}.`);
+    annotate('notice', 'Preflight overview', parts.join(' '));
   }
   if (summaryFile) {
     try {
