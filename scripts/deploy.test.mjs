@@ -344,12 +344,16 @@ test('Groq: --dry-run only describes the step, runs nothing and prints no key', 
 
 test('the deploy workflow hands the key to the deploy step and prints it nowhere', () => {
   const text = readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
-  assert.match(text, /GROQ_API_KEY: \$\{\{ secrets\.GROQ_API_KEY \}\}/);
-  // the only places a secret may appear are `env:` entries — never inside a shell command, where it could be echoed. Three forms: the value
-  // itself, the value with a second accepted spelling of the name (`a || b`: the first that exists wins), or the yes/no answer to
-  // "does the secret exist?" (`!= ''`), which carries no value.
+  assert.match(text, /GROQ_API_KEY: \$\{\{ secrets\.GROQ_API_KEY \|\| steps\.bundle\.outputs\.groq \}\}/);
+  // the only places a secret may appear are `env:` entries — never inside a shell command, where it could be echoed. The forms: the value
+  // itself; the value with other accepted spellings of the name (`a || b`: the first that exists wins) and, last of all, what the single
+  // DEPLOY_ENV secret provided (`|| steps.bundle.outputs.x`); or a yes/no answer to "does it exist?" (`!= ''`), which carries no value.
+  const ENV_ENTRY = [
+    /^\s+[A-Z_]+: \$\{\{ secrets\.[A-Z_]+( != ''| \|\| secrets\.[A-Z_]+( \|\| steps\.bundle\.outputs\.[a-z]+)?| \|\| steps\.bundle\.outputs\.[a-z]+)? \}\}\s*$/,
+    /^\s+GROQ_PROVIDED: \$\{\{ secrets\.GROQ_API_KEY != '' \|\| steps\.bundle\.outputs\.groq != '' \}\}\s*$/,
+  ];
   for (const line of text.split('\n')) {
-    if (/\$\{\{ *secrets\./.test(line)) assert.match(line, /^\s+[A-Z_]+: \$\{\{ secrets\.[A-Z_]+( != ''| \|\| secrets\.[A-Z_]+)? \}\}\s*$/, `secret used outside an env entry: ${line}`);
+    if (/\$\{\{ *secrets\./.test(line)) assert.ok(ENV_ENTRY.some((re) => re.test(line)), `secret used outside an env entry: ${line}`);
   }
 });
 
@@ -366,8 +370,9 @@ test('the shorter spellings CF_ACCOUNT_ID and CF_API_TOKEN work too, for the pre
   const text = workflowText();
   for (const name of ['Preflight', 'Deploy (build']) {
     const step = stepOf(text, name);
-    assert.match(step, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \|\| secrets\.CF_ACCOUNT_ID \}\}/);
-    assert.match(step, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \|\| secrets\.CF_API_TOKEN \}\}/);
+    assert.match(step, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \|\| secrets\.CF_ACCOUNT_ID \|\| steps\.bundle\.outputs\.account \}\}/);
+    assert.match(step, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \|\| secrets\.CF_API_TOKEN \|\| steps\.bundle\.outputs\.token \}\}/);
+    assert.match(step, /GROQ_API_KEY: \$\{\{ secrets\.GROQ_API_KEY \|\| steps\.bundle\.outputs\.groq \}\}/);
   }
 });
 
@@ -377,6 +382,25 @@ test('GitHub refuses to run a workflow that dumps the whole secrets context ("ma
   assert.ok(!/toJSON\(\s*secrets\s*\)/i.test(text), 'the whole secrets context must not be read');
   assert.ok(!/secrets\[/.test(text), 'secrets are asked for by name, one by one');
   assert.ok(!/\benv\b[^\n]*\|\s*(base64|xxd|od)\b|printenv\s*\|/.test(text), 'the environment is not piped anywhere');
+});
+
+test('one secret named DEPLOY_ENV can hold all the lines: read by a script, in deploy runs only, handed on as step outputs, behind the separate secrets', () => {
+  const text = workflowText();
+  const step = stepOf(text, 'Read the optional single secret DEPLOY_ENV');
+  assert.match(step, /\n {8}id: bundle\n/);
+  assert.match(step, /\n {8}if: steps\.ask\.outputs\.mode == 'deploy'\n/);
+  assert.match(step, /\n {8}env:\n {10}DEPLOY_ENV: \$\{\{ secrets\.DEPLOY_ENV \}\}\n {8}run: node scripts\/load-deploy-env\.mjs\n?$/);
+  // it runs after the plan and before the preflight, which is the first user of what it provides
+  assert.ok(text.indexOf('id: bundle') < text.indexOf('id: preflight'));
+  assert.ok(text.indexOf('npm run deploy -- --dry-run') < text.indexOf('id: bundle'));
+  // what the block provided is only ever used in an `env:` entry (never inside a script), and is always the LAST alternative
+  for (const line of text.split('\n')) {
+    if (!line.includes('steps.bundle.outputs')) continue;
+    assert.match(line, /^\s+[A-Z_]+: \$\{\{ .*\}\}\s*$/, `the block's values must stay in env entries: ${line}`);
+    if (line.includes('secrets.') && !line.includes('!=')) assert.match(line, /\|\| steps\.bundle\.outputs\.[a-z]+ \}\}\s*$/, `separate secrets win over the block: ${line}`);
+  }
+  // the script file the step runs exists
+  assert.ok(readFileSync(new URL('./load-deploy-env.mjs', import.meta.url), 'utf8').includes('GITHUB_OUTPUT'));
 });
 
 test('after a failed preflight the run says, per name, whether a secret exists — a yes or no, never a value — and only then, never in a "check" run', () => {

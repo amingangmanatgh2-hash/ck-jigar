@@ -2,4 +2,4 @@ deploy
 # Line 1 is "check" (run the plan and the tests only; nothing is published) or "deploy" (publish to Cloudflare).
 # A commit that changes this file, on Main or on an arena/* branch, starts the workflow "Deploy to Cloudflare" (.github/workflows/deploy.yml).
 # Line 4 and below are free notes: change them to start another run.
-note: third attempt. The run says per name whether a secret exists (yes or no, never a value) if the preflight cannot find the Cloudflare secrets.
+note: fourth attempt. One secret named DEPLOY_ENV can now hold all the lines (docs/deploy.md, step 4); without any secret the run stops at the preflight and says what it sees.

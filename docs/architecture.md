@@ -31,7 +31,7 @@ Everything runs in one Worker. There is no other server. Cloudflare services use
 | `apps/api` | The Worker. `src/routes` (HTTP), `src/services` (logic), `src/agents` (registry, planner, executor, approvals, tools), `src/ai` (models, client, health, usage, `providers/` for Groq), `src/do` (the three Durable Objects), `src/storage` (R2 + Drive tiers), `src/middleware`, `src/lib`, `migrations/` |
 | `apps/web` | The web app (React 19 + Vite): `src/screens`, `src/components`, `src/lib` (api, endpoint pool, outbox, realtime, e2ee…), `src/locales` (fa, en), service-worker plugin; `android/` is the Capacitor project |
 | `relay/` | Zero-dependency reverse proxy for networks where the Worker's address is blocked |
-| `scripts/` | `deploy.mjs`, `preflight.mjs` (asks Cloudflare and Groq whether everything is in place before a deployment), `verify-workers-ai.mjs`, `drive-token.mjs`, `dev-api.mjs` |
+| `scripts/` | `deploy.mjs`, `load-deploy-env.mjs` (reads the optional single secret `DEPLOY_ENV` into step outputs, masking the credentials first), `preflight.mjs` (asks Cloudflare and Groq whether everything is in place before a deployment), `verify-workers-ai.mjs`, `drive-token.mjs`, `dev-api.mjs` |
 | `.github/workflows` | CI, Android build, Workers AI check, deploy |
 
 ## Request path

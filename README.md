@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| ✅ ساخته و آزمایش‌شده | همهٔ بخش‌های خواستهٔ پروژه: مخاطب AMIN AI، گفتگو با پخش زنده، `@AMINAI` در چت‌ها با دسترسی مستقل برای هر چت، شش دستیار (به‌علاوهٔ «عمومی» و «سریع»؛ سریع روی Groq کار می‌کند و مثلاً چت یک نفر را برایتان آماده باز می‌کند)، موتور وظیفه با لاگ و لغو و تلاش دوباره، تأیید برای کارهای حساس، حافظهٔ قابل مدیریت، کنترل مدیران گروه، سهمیه و محدودیت نرخ، فارسی و انگلیسی با RTL واقعی. **۶۶۵ آزمون خودکار** (۳۲۰ آزمون API روی workerd واقعی، ۲۳۹ آزمون وب، ۱۰۶ آزمون اسکریپت و رله)، و CI در GitHub سبز است. |
+| ✅ ساخته و آزمایش‌شده | همهٔ بخش‌های خواستهٔ پروژه: مخاطب AMIN AI، گفتگو با پخش زنده، `@AMINAI` در چت‌ها با دسترسی مستقل برای هر چت، شش دستیار (به‌علاوهٔ «عمومی» و «سریع»؛ سریع روی Groq کار می‌کند و مثلاً چت یک نفر را برایتان آماده باز می‌کند)، موتور وظیفه با لاگ و لغو و تلاش دوباره، تأیید برای کارهای حساس، حافظهٔ قابل مدیریت، کنترل مدیران گروه، سهمیه و محدودیت نرخ، فارسی و انگلیسی با RTL واقعی. **۶۸۴ آزمون خودکار** (۳۲۰ آزمون API روی workerd واقعی، ۲۳۹ آزمون وب، ۱۲۵ آزمون اسکریپت و رله)، و CI در GitHub سبز است. |
 | ✅ APK | روی GitHub ساخته و ۱۰ بررسی محتوا رویش انجام می‌شود (workflow «Android app»). |
 | ❌ **هنوز دیپلوی واقعی نشده** | به حساب Cloudflare دسترسی نبود. دستور و workflow دیپلوی آماده‌اند ([docs/deploy.md](docs/deploy.md)) ولی هیچ‌وقت روی Cloudflare اجرا نشده‌اند؛ پس **آدرس زنده‌ای وجود ندارد**. |
 | ❌ **اتصال واقعی Workers AI و Groq آزمایش نشده** | منطق مدل‌ها با شبیه‌ساز (برای هر دو سرویس) آزمایش شده است، نه با مدل واقعی. بعد از دیپلوی `npm run verify:ai` را اجرا کنید ([docs/testing.md](docs/testing.md)). در برنامه هیچ پاسخ ساختگی وجود ندارد: بدون اتصال، AMIN AI صادقانه می‌گوید وصل نیست. |
@@ -19,7 +19,7 @@
 
 ## راه‌اندازی روی Cloudflare
 
-دو Secret در GitHub (`CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN`؛ سومی `GROQ_API_KEY` اختیاری است)، `ADMIN_USERNAMES` در `apps/api/wrangler.jsonc`، و یک کلیک روی **Actions ← Deploy to Cloudflare ← Run workflow**. اشتراک R2 لازم است (یک بار در داشبورد Cloudflare). پلن رایگان Workers برای امتحان کافی است، با دو محدودیت که در راهنما آمده؛ Workers Paid امن‌تر است. گام‌به‌گام و عیب‌یابی: **[docs/deploy.md](docs/deploy.md)**. دکمهٔ یک‌کلیکی Cloudflare برای این مخزن کار نمی‌کند (توضیح در همان فایل). دکمهٔ «Run workflow» فقط وقتی دیده می‌شود که workflow در شاخهٔ پیش‌فرض `Main` باشد؛ بدون Merge هم می‌شود با تغییر فایل `deploy/REQUEST` شروعش کرد.
+یک Secret در GitHub به نام `DEPLOY_ENV` (خط‌های `CF_ACCOUNT_ID=…`، `CF_API_TOKEN=…` و اختیاری `GROQ_API_KEY=…`؛ یا سه Secret جدا)، `ADMIN_USERNAMES` در `apps/api/wrangler.jsonc`، و یک کلیک روی **Actions ← Deploy to Cloudflare ← Run workflow**. اشتراک R2 لازم است (یک بار در داشبورد Cloudflare). پلن رایگان Workers برای امتحان کافی است، با دو محدودیت که در راهنما آمده؛ Workers Paid امن‌تر است. گام‌به‌گام و عیب‌یابی: **[docs/deploy.md](docs/deploy.md)**. دکمهٔ یک‌کلیکی Cloudflare برای این مخزن کار نمی‌کند (توضیح در همان فایل). دکمهٔ «Run workflow» فقط وقتی دیده می‌شود که workflow در شاخهٔ پیش‌فرض `Main` باشد؛ بدون Merge هم می‌شود با تغییر فایل `deploy/REQUEST` شروعش کرد.
 
 ## اجرا روی رایانهٔ خودتان
 
@@ -50,7 +50,7 @@ npm test                  # همهٔ آزمون‌ها؛ npm run typecheck
 
 ## ساختار مخزن
 
-`apps/api` (Worker) · `apps/web` (برنامهٔ وب و پروژهٔ اندروید در `android/`) · `packages/shared` (نوع‌ها و قاعدهٔ دسترسی مشترک) · `relay/` · `scripts/` (deploy، پیش‌آزمون Cloudflare و Groq، بررسی Workers AI، توکن Drive) · `.github/workflows` (CI، اندروید، دیپلوی، بررسی Workers AI) · `docs/`.
+`apps/api` (Worker) · `apps/web` (برنامهٔ وب و پروژهٔ اندروید در `android/`) · `packages/shared` (نوع‌ها و قاعدهٔ دسترسی مشترک) · `relay/` · `scripts/` (deploy، خواندن `DEPLOY_ENV`، پیش‌آزمون Cloudflare و Groq، بررسی Workers AI، توکن Drive) · `.github/workflows` (CI، اندروید، دیپلوی، بررسی Workers AI) · `docs/`.
 
 </div>
 
@@ -64,7 +64,7 @@ A messenger (web + Android) with a real AI assistant, **AMIN AI**, as a permanen
 
 | | |
 |---|---|
-| ✅ Built and tested | The whole brief: the AMIN AI contact, streaming chat with edit / regenerate / search / voice / files, `@AMINAI` in other chats with an independent AI setting per chat (E2EE chats: only what the user selects), six agents (Personal, Research, Coding, Messenger, File, Creative) plus a General and a fast Quick agent (it runs on Groq and, for example, readies someone's chat for you to open), a task engine with a live operation log, retry and cancel, approval before anything sensitive, manageable per-user memory, group-admin control of the AI level, per-user quota and rate limits. **665 automated tests** (320 API tests on a real workerd, 239 web, 106 script and relay tests); CI is green on GitHub. |
+| ✅ Built and tested | The whole brief: the AMIN AI contact, streaming chat with edit / regenerate / search / voice / files, `@AMINAI` in other chats with an independent AI setting per chat (E2EE chats: only what the user selects), six agents (Personal, Research, Coding, Messenger, File, Creative) plus a General and a fast Quick agent (it runs on Groq and, for example, readies someone's chat for you to open), a task engine with a live operation log, retry and cancel, approval before anything sensitive, manageable per-user memory, group-admin control of the AI level, per-user quota and rate limits. **684 automated tests** (320 API tests on a real workerd, 239 web, 125 script and relay tests); CI is green on GitHub. |
 | ✅ Android | The APK builds on GitHub and its contents are checked (10 checks), workflow *Android app*. |
 | ❌ **Not deployed** | No Cloudflare credentials were available. The deploy script and workflow exist ([docs/deploy.md](docs/deploy.md)) but have never run against Cloudflare, so **there is no live URL**. |
 | ❌ **The real Workers AI and Groq call paths are unverified** | Model handling was tested against deterministic doubles of both services, not a real model. After deploying, run `npm run verify:ai` ([docs/testing.md](docs/testing.md)). The app contains no canned answers: without a connection AMIN AI says so. |
@@ -75,7 +75,7 @@ The complete lists: [docs/testing.md](docs/testing.md) (what is not verified) an
 
 ## Deploy
 
-Two GitHub secrets (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`; a third, `GROQ_API_KEY`, is optional), `ADMIN_USERNAMES` in `apps/api/wrangler.jsonc`, then **Actions → Deploy to Cloudflare → Run workflow**. An R2 subscription is required (once, in the Cloudflare dashboard). The Workers Free plan is enough to try it, with two limits described in the guide; Workers Paid is safer. Step by step, with troubleshooting: **[docs/deploy.md](docs/deploy.md)**. Cloudflare's one-click button does not work for this monorepo (explained there), and GitHub shows *Run workflow* only once the workflow is on the default branch, `Main`; without merging, changing the file `deploy/REQUEST` starts it.
+One GitHub secret named `DEPLOY_ENV` (the lines `CF_ACCOUNT_ID=…`, `CF_API_TOKEN=…` and optionally `GROQ_API_KEY=…`; or three separate secrets), `ADMIN_USERNAMES` in `apps/api/wrangler.jsonc`, then **Actions → Deploy to Cloudflare → Run workflow**. An R2 subscription is required (once, in the Cloudflare dashboard). The Workers Free plan is enough to try it, with two limits described in the guide; Workers Paid is safer. Step by step, with troubleshooting: **[docs/deploy.md](docs/deploy.md)**. Cloudflare's one-click button does not work for this monorepo (explained there), and GitHub shows *Run workflow* only once the workflow is on the default branch, `Main`; without merging, changing the file `deploy/REQUEST` starts it.
 
 ## Run locally
 
@@ -106,4 +106,4 @@ Locally the admin user is `dev_admin`.
 
 ## Repository layout
 
-`apps/api` (the Worker) · `apps/web` (the web app; the Android project is in `android/`) · `packages/shared` (shared types and the access policy) · `relay/` · `scripts/` (deploy, the Cloudflare and Groq preflight, Workers AI check, Drive token) · `.github/workflows` (CI, Android, deploy, Workers AI check) · `docs/`.
+`apps/api` (the Worker) · `apps/web` (the web app; the Android project is in `android/`) · `packages/shared` (shared types and the access policy) · `relay/` · `scripts/` (deploy, the `DEPLOY_ENV` reader, the Cloudflare and Groq preflight, Workers AI check, Drive token) · `.github/workflows` (CI, Android, deploy, Workers AI check) · `docs/`.

@@ -85,13 +85,16 @@ export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep 
     // Where to add them: a direct link when the repository is known (it is, inside GitHub Actions). In Actions the workflow also accepts
     // the two common shorter spellings, so the hint names them.
     const link = env.GITHUB_REPOSITORY ? `https://github.com/${env.GITHUB_REPOSITORY}/settings/secrets/actions` : 'GitHub → Settings → Secrets and variables → Actions';
-    const spelling = env.GITHUB_ACTIONS === 'true' ? ' (CF_ACCOUNT_ID and CF_API_TOKEN are accepted as well)' : '';
+    const inActions = env.GITHUB_ACTIONS === 'true';
+    const spelling = inActions ? ' (CF_ACCOUNT_ID and CF_API_TOKEN are accepted as well)' : '';
+    // The easiest way, offered only where it exists (the workflow reads the block; this script run by hand does not).
+    const easiest = inActions ? ` Easiest: ONE secret named DEPLOY_ENV whose value is the lines CF_ACCOUNT_ID=…, CF_API_TOKEN=… and (optional) GROQ_API_KEY=…, one per line (${link}/new).` : '';
     const plural = missing.length > 1;
     results.push(
       fail(
         'credentials',
         'Cloudflare credentials',
-        `${missing.join(' and ')} ${plural ? 'are' : 'is'} missing, so nothing could be checked. Add ${plural ? 'them' : 'it'} as a REPOSITORY secret: ${link} → button "New repository secret"; the name must match exactly${spelling}. A Variable, a Codespaces secret or a Dependabot secret does not work. (فارسی: ${plural ? 'این Secretها به workflow نرسیده‌اند' : 'این Secret به workflow نرسیده است'}؛ باید در همین مخزن و در بخش Actions ← Repository secrets ساخته شود، نه Variable.)`,
+        `${missing.join(' and ')} ${plural ? 'are' : 'is'} missing, so nothing could be checked. Add ${plural ? 'them' : 'it'} as a REPOSITORY secret: ${link} → button "New repository secret"; the name must match exactly${spelling}. A Variable, a Codespaces secret or a Dependabot secret does not work.${easiest} (فارسی: ${plural ? 'این Secretها به workflow نرسیده‌اند' : 'این Secret به workflow نرسیده است'}؛ باید در همین مخزن و در بخش Actions ← Repository secrets ساخته شود، نه Variable.${inActions ? ' ساده‌ترین راه: فقط یک Secret به نام DEPLOY_ENV با همان خط‌هایی که در چت می‌نویسید.' : ''})`,
       ),
     );
   } else if (!/^[0-9a-f]{32}$/i.test(account)) {

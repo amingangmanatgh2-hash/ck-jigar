@@ -7,7 +7,7 @@
 
 | راه | برای چه کسی | چه می‌خواهد |
 |---|---|---|
-| **الف) GitHub Actions** (بدون ترمینال) | اگر فقط مرورگر دارید | دو Secret در GitHub (به‌علاوهٔ یک Secret اختیاری برای Groq)، یک بار کلیک روی «Run workflow» |
+| **الف) GitHub Actions** (بدون ترمینال) | اگر فقط مرورگر دارید | یک Secret در GitHub (با اطلاعات حساب Cloudflare و، اگر خواستید، کلید Groq)، یک بار کلیک روی «Run workflow» |
 | **ب) از رایانهٔ خودتان** | اگر Node.js دارید | `npx wrangler login` و `npm run deploy` |
 
 > **راستی‌آزمایی:** همهٔ منطق برنامه با آزمون خودکار و Worker محلی (workerd) آزمایش شده، ولی **من به حساب Cloudflare دسترسی نداشتم**؛ پس هیچ‌کدام از مراحل زیر روی Cloudflare واقعی اجرا نشده‌اند و هیچ فراخوانی واقعی به Workers AI یا Groq هم انجام نشده است (سرور Groq هم در آزمون‌ها ساختگی است و بر پایهٔ مستندات رسمی نوشته شده).
@@ -54,10 +54,21 @@ Workers AI همچنان زیرساخت اصلی است. Groq سرویس دوم �
 
 ۳. **توکن API:** [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) ← Create Token ← قالب **Edit Cloudflare Workers** ← Use template. این قالب (طبق فهرست رسمی Cloudflare) دسترسی‌های Workers Scripts، Workers R2 Storage و Account Settings را دارد ولی **D1 را ندارد**؛ پس یک ردیف دسترسی دیگر اضافه کنید (دکمهٔ «+ Add more»): Account ← **D1** ← **Edit**. در «Account Resources» همان حساب خودتان را انتخاب کنید ← Continue to summary ← Create Token. مقدار توکن **فقط یک بار** نشان داده می‌شود؛ همان لحظه کپی کنید.
 
-۴. در GitHub: مخزن ← Settings ← Secrets and variables ← Actions ← New repository secret ([لینک مستقیم: github.com/amingangmanatgh2-hash/ck-jigar/settings/secrets/actions](https://github.com/amingangmanatgh2-hash/ck-jigar/settings/secrets/actions))، دو مورد:
-   `CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN`. (توکن را هرگز در خود مخزن یا چت ننویسید.) اسم‌ها باید **دقیقاً** همین باشند؛ دو اسم کوتاه‌تر `CF_ACCOUNT_ID` و `CF_API_TOKEN` هم پذیرفته می‌شوند (اگر هر دو اسم باشند، اسم بلند برنده است).
-   باید از نوع **Repository secret** باشند؛ «Variables»، «Codespaces» و «Dependabot» جداست و workflow آن‌ها را نمی‌بیند. اگر چیزی به workflow نرسد، اجرا در پیش‌آزمون می‌ایستد و برای هر اسمِ محتمل (مثلاً `CF_API_TOKEN`، `CLOUDFLARE_TOKEN`) در Summary و در یک هشدار می‌نویسد «هست» یا «نیست» (فقط بله/خیر؛ هرگز مقدار)؛ از روی همان معلوم می‌شود اسم را اشتباه نوشته‌اید یا جای دیگری گذاشته‌اید.
-   مورد سوم **اختیاری** است: `GROQ_API_KEY` ([بخش Groq](#groq-سرویس-هوش-مصنوعی-دوم-اختیاری) پایین).
+۴. **اطلاعات حساب را به GitHub بدهید (ساده‌ترین راه: فقط یک Secret).** [این لینک](https://github.com/amingangmanatgh2-hash/ck-jigar/settings/secrets/actions/new) را باز کنید (یا: مخزن ← Settings ← Secrets and variables ← Actions ← New repository secret). دو خانه دارد:
+   - **Name:** `DEPLOY_ENV`
+   - **Secret:** همان خط‌هایی که در چت می‌نویسید، هر کدام در یک خط (بدون فاصلهٔ اضافه، بدون نقل‌قول). مثال با مقدارهای ساختگی:
+
+   ```
+   CF_ACCOUNT_ID=0123456789abcdef0123456789abcdef
+   CF_API_TOKEN=cfut_توکن-خودتان
+   GROQ_API_KEY=gsk_کلید-خودتان
+   ```
+
+   خط Groq اختیاری است. اسم‌ها را `CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN` هم می‌شود نوشت؛ بزرگی و کوچکی حروف مهم نیست، `export `، نقل‌قول، `:` به‌جای `=` و خط‌های توضیح (`#`) را هم می‌پذیرد. خطی که به شکل `اسم=مقدار` نباشد رد می‌شود و **متنش هرگز در لاگ نمی‌آید**؛ مقدار توکن‌ها پیش از هر کاری در لاگ پوشانده می‌شود. توکن را هرگز در خود مخزن یا چت عمومی ننویسید.
+
+   **راه دوم، به‌جای آن:** سه Secret جدا با همین اسم‌ها: `CLOUDFLARE_ACCOUNT_ID`، `CLOUDFLARE_API_TOKEN` و (اختیاری) `GROQ_API_KEY` (اسم‌های کوتاه‌تر `CF_ACCOUNT_ID` و `CF_API_TOKEN` هم پذیرفته می‌شوند). اگر هر دو راه باشد، Secretِ جدا برنده است.
+
+   باید از نوع **Repository secret** باشد؛ «Variables»، «Codespaces» و «Dependabot» جداست و workflow آن‌ها را نمی‌بیند. اگر چیزی به workflow نرسد، اجرا در پیش‌آزمون می‌ایستد و برای هر اسمِ محتمل در Summary و در یک هشدار می‌نویسد «هست» یا «نیست» (فقط بله/خیر؛ هرگز مقدار)؛ از روی همان معلوم می‌شود جای دیگری گذاشته‌اید یا اسم را اشتباه نوشته‌اید. (مورد سوم، `GROQ_API_KEY`، اختیاری است: [بخش Groq](#groq-سرویس-هوش-مصنوعی-دوم-اختیاری) پایین.)
 
 ۵. فایل `apps/api/wrangler.jsonc` را در GitHub باز کنید (آیکن مداد) و خطِ `"ADMIN_USERNAMES": ""` را پیدا کنید؛ نام را **بین دو نقل‌قولِ خالی** بگذارید، مثلاً `"ADMIN_USERNAMES": "my_boss_2027"` (حروف انگلیسی، عدد و `_`؛ رزروها مجاز نیستند) و Commit کنید.
 
@@ -70,7 +81,7 @@ Workers AI همچنان زیرساخت اصلی است. Groq سرویس دوم �
 اگر Pull Request را Merge نمی‌کنید، دکمهٔ «Run workflow» هرگز ظاهر نمی‌شود، ولی لازم هم نیست. هر commit که فایل `deploy/REQUEST` را روی شاخهٔ `Main` یا روی شاخه‌ای که با `arena/` شروع می‌شود تغییر بدهد، همان workflow را شروع می‌کند. **خط اول** فایل:
 
 - `check`: فقط طرح و آزمون‌ها اجرا می‌شوند. هیچ Secret خوانده و هیچ چیز منتشر نمی‌شود (برای اطمینان از سالم‌بودن مسیر).
-- `deploy`: منتشر می‌کند؛ به دو Secret مرحلهٔ ۴ نیاز دارد (و به سومی، `GROQ_API_KEY`، اگر Groq را می‌خواهید). اول پیش‌آزمون اجرا می‌شود؛ اگر Secretی نباشد یا چیزی کم باشد، **همهٔ کمبودها یک‌جا** به‌صورت «error» نوشته می‌شود و هیچ‌چیز منتشر نمی‌شود.
+- `deploy`: منتشر می‌کند؛ به Secretِ مرحلهٔ ۴ نیاز دارد (`DEPLOY_ENV`، یا سه Secret جدا). اول پیش‌آزمون اجرا می‌شود؛ اگر Secretی نباشد یا چیزی کم باشد، **همهٔ کمبودها یک‌جا** به‌صورت «error» نوشته می‌شود و هیچ‌چیز منتشر نمی‌شود.
 - **اگر اجرا به‌خاطر نبودن Secret شکست خورد:** Secretها را بگذارید و در صفحهٔ **همان اجرا** دکمهٔ «Re-run all jobs» را بزنید. لازم نیست چیزی commit کنید؛ اجرای دوباره از Secretهای تازه می‌خواند.
 
 خط‌های بعدی یادداشت آزادند؛ برای شروع یک اجرای تازه چیزی در فایل عوض کنید. نتیجه روی صفحهٔ همان اجرا می‌آید: آدرس سایت به‌صورت یک «notice» و در Summary، و هر خطا به‌صورت «error» با خطوط مهمِ آن.
@@ -180,7 +191,7 @@ npm run dev:web            # Vite روی ‎:5173، /api را به Worker محل
 | خطای ۱۰۲۷ | سقف ۱۰۰٬۰۰۰ درخواست در روز در پلن رایگان |
 | `AI_NOT_CONNECTED` | نه بایندینگ `AI` هست و نه `GROQ_API_KEY` (حالت offline، یا wrangler.jsonc دست‌کاری شده) |
 | مدل «در دسترس نیست» با دلیل `check_failed` یا `unverified` | یک مدل خطا داده (۲۰ دقیقه کنار می‌رود) یا هنوز بررسی نشده؛ دکمهٔ بررسی را بزنید. اگر همیشه شکست می‌خورد، به `npm run verify:ai` نگاه کنید |
-| Preflight: «✗ Cloudflare credentials … are missing» و زیرش «Which secrets this run sees» | Secret را در جای دیگری ساخته‌اید (باید Repository secret همین مخزن باشد؛ لینک در بالا). اگر اسم دیگری را (مثلاً `CLOUDFLARE_TOKEN`) پیدا کرده باشد، همان را می‌گوید؛ GitHub اجازهٔ تغییر اسم نمی‌دهد، پس Secret را با اسم درست دوباره بسازید: `CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN` (یا `CF_ACCOUNT_ID` و `CF_API_TOKEN`). یک حرف فرق هم یعنی «پیدا نشد» |
+| Preflight: «✗ Cloudflare credentials … are missing» و زیرش «Which secrets this run sees» | Secret ساخته نشده یا جای دیگری ساخته شده (باید Repository secret همین مخزن باشد؛ ساده‌ترین راه: یک Secret به نام `DEPLOY_ENV`، لینک در مرحلهٔ ۴). اگر `DEPLOY_ENV` را ساخته‌اید و باز هم می‌گوید نیست، مرحلهٔ «Read the optional single secret DEPLOY_ENV» در همان اجرا می‌گوید کدام خط را نخوانده (اسم خط، هرگز مقدار). اگر اسم دیگری را (مثلاً `CLOUDFLARE_TOKEN`) پیدا کرده باشد، همان را می‌گوید؛ GitHub اجازهٔ تغییر اسم نمی‌دهد، پس Secret را با اسم درست دوباره بسازید: `CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN` (یا `CF_ACCOUNT_ID` و `CF_API_TOKEN`). یک حرف فرق هم یعنی «پیدا نشد» |
 | Preflight: «✗ D1 database … no D1 right» | توکن دسترسی D1 ندارد: توکن را Edit کنید و یک ردیف اضافه کنید: Account ← D1 ← Edit. (مقدار توکن عوض نمی‌شود.) |
 | Preflight: «✗ R2 file storage … not switched on» | اشتراک R2 فعال نیست (داشبورد ← Storage & databases ← R2 ← Overview ← خرید) |
 | Preflight: «✗ Workers … different account» | `CLOUDFLARE_ACCOUNT_ID` مال حساب دیگری است یا توکن «Workers Scripts: Edit» ندارد |

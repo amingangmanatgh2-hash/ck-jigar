@@ -1,14 +1,17 @@
 # Manual ("Run workflow"): publishes AMIN CHAT to YOUR Cloudflare account — web app, Worker, database and file bucket — and shows the
 # address of the live service at the top of the run page.
 #
-# One-time setup (Settings > Secrets and variables > Actions > New repository secret):
+# One-time setup. The easiest way is ONE repository secret (Settings > Secrets and variables > Actions > New repository secret) named
+# DEPLOY_ENV whose value is these lines, one per line, no quotes (CF_ACCOUNT_ID / CF_API_TOKEN are accepted as shorter spellings):
+#     CLOUDFLARE_ACCOUNT_ID=...   CLOUDFLARE_API_TOKEN=...   GROQ_API_KEY=...   (the last one is optional)
+# Or three separate repository secrets with those names; a separate secret wins over the same line in DEPLOY_ENV. What each one is:
 #   CLOUDFLARE_ACCOUNT_ID   your account id (dashboard > Workers & Pages > Account Details > copy button)
 #   CLOUDFLARE_API_TOKEN    My Profile > API Tokens > Create Token > template "Edit Cloudflare Workers" (it has Workers Scripts,
 #                           Workers R2 Storage and Account Settings but NOT D1), then add one more row: Account > D1 > Edit
 #   GROQ_API_KEY            optional: console.groq.com > API Keys > Create. A second AI service, next to Workers AI: it answers quick
 #                           requests first and takes over when Workers AI is busy or its free allowance is spent. Without it the
 #                           service runs on Workers AI alone.
-# The three names must match exactly. Before anything is published a preflight asks Cloudflare and Groq whether everything is in place
+# The names must match exactly. Before anything is published a preflight asks Cloudflare and Groq whether everything is in place
 # (token, Workers, D1, R2, Groq) and lists ALL problems at once, with the fix for each; it prints no secret.
 # Also, once: open Workers & Pages in the Cloudflare dashboard so your account has a workers.dev address (it asks you to pick one),
 # subscribe to R2 (Storage & databases > R2 > Overview > checkout; free monthly allowance). The free Workers plan is enough to try it, with
@@ -73,13 +76,19 @@ jobs:
         run: |
           set -o pipefail
           npm run deploy -- --dry-run 2>&1 | tee plan.log
+      - name: Read the optional single secret DEPLOY_ENV (one paste instead of three secrets)
+        id: bundle
+        if: steps.ask.outputs.mode == 'deploy'
+        env:
+          DEPLOY_ENV: ${{ secrets.DEPLOY_ENV }}
+        run: node scripts/load-deploy-env.mjs
       - name: Preflight (is everything in place? all problems at once, no secret printed)
         id: preflight
         if: steps.ask.outputs.mode == 'deploy'
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || steps.bundle.outputs.account }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN || steps.bundle.outputs.token }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY || steps.bundle.outputs.groq }}
         run: |
           set -o pipefail
           npm run preflight 2>&1 | tee preflight.log
@@ -91,9 +100,9 @@ jobs:
         id: deploy
         if: steps.ask.outputs.mode == 'deploy'
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || steps.bundle.outputs.account }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN || steps.bundle.outputs.token }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY || steps.bundle.outputs.groq }}
         run: |
           set -o pipefail
           npm run deploy 2>&1 | tee deploy.log
@@ -121,7 +130,7 @@ jobs:
         if: success() && steps.ask.outputs.mode == 'deploy' && (inputs.smoke_url != '' || steps.address.outputs.url != '')
         env:
           TARGET: ${{ inputs.smoke_url || steps.address.outputs.url }}
-          GROQ_PROVIDED: ${{ secrets.GROQ_API_KEY != '' }}
+          GROQ_PROVIDED: ${{ secrets.GROQ_API_KEY != '' || steps.bundle.outputs.groq != '' }}
         run: |
           # a new workers.dev address can take a minute to become reachable
           for i in $(seq 1 12); do
@@ -170,25 +179,32 @@ jobs:
           S_CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY != '' }}
           S_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY != '' }}
           S_GROQ_KEY: ${{ secrets.GROQ_KEY != '' }}
+          S_DEPLOY_ENV: ${{ secrets.DEPLOY_ENV != '' }}
+          B_ACCOUNT: ${{ steps.bundle.outputs.account != '' }}
+          B_TOKEN: ${{ steps.bundle.outputs.token != '' }}
+          B_GROQ: ${{ steps.bundle.outputs.groq != '' }}
         run: |
           # Only the names this project could plausibly be given are asked about, one by one: "does a secret with this name exist?".
           LINK="https://github.com/$REPO/settings/secrets/actions"
           FOUND=""
-          for n in CLOUDFLARE_ACCOUNT_ID CF_ACCOUNT_ID ACCOUNT_ID CLOUDFLARE_API_TOKEN CF_API_TOKEN CLOUDFLARE_TOKEN CF_TOKEN CLOUDFLARE_API_KEY GROQ_API_KEY GROQ_KEY; do
+          for n in CLOUDFLARE_ACCOUNT_ID CF_ACCOUNT_ID ACCOUNT_ID CLOUDFLARE_API_TOKEN CF_API_TOKEN CLOUDFLARE_TOKEN CF_TOKEN CLOUDFLARE_API_KEY GROQ_API_KEY GROQ_KEY DEPLOY_ENV; do
             if [ "$(printenv "S_$n")" = "true" ]; then FOUND="$FOUND $n"; fi
           done
           FOUND="${FOUND# }"
           has() { case " $FOUND " in *" $1 "*) return 0 ;; esac; return 1; }
-          ACCOUNT=NOT_FOUND; if has CLOUDFLARE_ACCOUNT_ID || has CF_ACCOUNT_ID; then ACCOUNT=found; fi
-          TOKEN=NOT_FOUND; if has CLOUDFLARE_API_TOKEN || has CF_API_TOKEN; then TOKEN=found; fi
-          GROQ=NOT_FOUND; if has GROQ_API_KEY; then GROQ=found; fi
+          ACCOUNT=NOT_FOUND; if has CLOUDFLARE_ACCOUNT_ID || has CF_ACCOUNT_ID; then ACCOUNT=found; elif [ "$B_ACCOUNT" = true ]; then ACCOUNT="found (a line of DEPLOY_ENV)"; fi
+          TOKEN=NOT_FOUND; if has CLOUDFLARE_API_TOKEN || has CF_API_TOKEN; then TOKEN=found; elif [ "$B_TOKEN" = true ]; then TOKEN="found (a line of DEPLOY_ENV)"; fi
+          GROQ=NOT_FOUND; if has GROQ_API_KEY; then GROQ=found; elif [ "$B_GROQ" = true ]; then GROQ="found (a line of DEPLOY_ENV)"; fi
           SEE="${FOUND// /, }"; [ -n "$SEE" ] || SEE="none of the expected names"
-          if [ -z "$FOUND" ]; then
-            HINT="No secret with a name this project uses reaches the workflow, so they were never saved, or saved somewhere else. They must be REPOSITORY secrets of $REPO: open $LINK (tab Actions) and press New repository secret. Variables, Codespaces secrets and Dependabot secrets are not seen by this workflow."
-          elif [ "$ACCOUNT" = found ] && [ "$TOKEN" = found ]; then
-            HINT="Both Cloudflare secrets exist, so the preflight message above is about their content, not their names."
+          EASIEST="Easiest: ONE secret named DEPLOY_ENV (open $LINK/new), whose value is the same lines you would write in a chat: CF_ACCOUNT_ID=...  CF_API_TOKEN=...  GROQ_API_KEY=... (one per line)."
+          if [ "$ACCOUNT" != NOT_FOUND ] && [ "$TOKEN" != NOT_FOUND ]; then
+            HINT="Both Cloudflare values reach the workflow, so the preflight message above is about their content, not their names."
+          elif has DEPLOY_ENV; then
+            HINT="A secret named DEPLOY_ENV exists, but it holds no usable line for everything this run needs: see the warnings of the step that reads it (they name the missing lines, never the values). Needed lines: CLOUDFLARE_ACCOUNT_ID (or CF_ACCOUNT_ID) and CLOUDFLARE_API_TOKEN (or CF_API_TOKEN), one per line, NAME=value."
+          elif [ -z "$FOUND" ]; then
+            HINT="No secret with a name this project uses reaches the workflow, so it was never saved, or saved somewhere else. It must be a REPOSITORY secret of $REPO (open $LINK, tab Actions, button New repository secret); Variables, Codespaces secrets and Dependabot secrets are not seen by this workflow. $EASIEST"
           else
-            HINT="Some secrets exist, but not the two this run needs. Needed: CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN (CF_ACCOUNT_ID and CF_API_TOKEN work too). GitHub cannot rename a secret: create it again under the right name at $LINK"
+            HINT="Some secrets exist, but not the two this run needs (CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN, or CF_ACCOUNT_ID and CF_API_TOKEN). GitHub cannot rename a secret: create it again under the right name at $LINK. $EASIEST"
           fi
           if has CLOUDFLARE_API_KEY && [ "$TOKEN" != found ]; then
             HINT="$HINT CLOUDFLARE_API_KEY is the old Global API Key, which this deployment does not use: create an API TOKEN (My Profile > API Tokens > Create Token)."

@@ -89,9 +89,11 @@ test('missing credentials inside GitHub Actions: a direct link to the right page
   assert.match(text, /CF_ACCOUNT_ID and CF_API_TOKEN are accepted as well/);
   assert.match(text, /Variable, a Codespaces secret or a Dependabot secret does not work/);
   assert.match(text, /فارسی: .*Repository secrets/);
+  assert.match(text, /Easiest: ONE secret named DEPLOY_ENV .*CF_ACCOUNT_ID=…, CF_API_TOKEN=… and \(optional\) GROQ_API_KEY=…, one per line \(https:\/\/github\.com\/someone\/some-repo\/settings\/secrets\/actions\/new\)/);
+  assert.match(text, /ساده‌ترین راه: فقط یک Secret به نام DEPLOY_ENV/);
   // on somebody's own computer the shorter spellings are NOT accepted by this script, so they are not advertised, and there is no repository to link to
   const local = detail(await runChecks({ env: {}, fetch: w.fetch, ...quick }), 'credentials');
-  assert.ok(!/CF_ACCOUNT_ID/.test(local) && !/github\.com\//.test(local));
+  assert.ok(!/CF_ACCOUNT_ID/.test(local) && !/github\.com\//.test(local) && !/DEPLOY_ENV/.test(local));
   assert.match(local, /GitHub → Settings → Secrets and variables → Actions/);
   assert.equal(w.seen.length, 0);
 });
