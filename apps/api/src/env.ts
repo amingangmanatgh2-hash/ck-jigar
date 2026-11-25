@@ -11,6 +11,8 @@ export interface Env {
    * Optional only so the app can start (and say so honestly) in a credential-less local dev environment.
    */
   AI?: Ai;
+  /** Tests only: when bound, every Groq request goes through this fetcher instead of the network (like GOOGLE_API below). */
+  GROQ_API?: Fetcher;
   ASSETS?: Fetcher;
   USER_HUB: DurableObjectNamespace<UserHub>;
   RUN_COORDINATOR: DurableObjectNamespace<RunCoordinator>;
@@ -37,6 +39,11 @@ export interface Env {
   DEFAULT_MONTHLY_TOKENS?: string;
   /** Optional: Cloudflare AI Gateway id used for all Workers AI calls (caching/observability). */
   AI_GATEWAY_ID?: string;
+  /**
+   * Groq's free tier refuses requests above its tokens-per-minute limit (8000 per model), so a prompt whose estimated size exceeds this
+   * many tokens is not sent to Groq at all and goes to another model. Default 5000. Raise it on a paid Groq plan.
+   */
+  GROQ_MAX_INPUT_TOKENS?: string;
 
   /** Move files older than this many days from R2 to Google Drive (default 7). */
   FILES_OFFLOAD_AFTER_DAYS?: string;
@@ -48,6 +55,12 @@ export interface Env {
   DRIVE_FOLDER_NAME?: string;
 
   // ---- secrets (wrangler secret put …)
+  /**
+   * Second AI provider (https://console.groq.com/keys). Optional: without it Groq is "not connected", none of its models is offered or
+   * tried, and no chat content ever leaves Cloudflare. With it Groq answers the quick, small requests first (routing, planning, titles,
+   * the Quick agent) and is a fallback for everything else. `npm run deploy` stores it from the environment variable of the same name.
+   */
+  GROQ_API_KEY?: string;
   /**
    * Shared secret of the operator's relays. A request that carries it in `X-Relay-Secret` may tell us the real client address in
    * `X-Forwarded-For`; without it every user behind a relay would share the relay's address (and its rate limits).

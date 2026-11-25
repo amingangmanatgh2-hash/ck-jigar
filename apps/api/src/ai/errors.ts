@@ -6,6 +6,7 @@ export type AiErrorKind =
   | 'account_limit' // Cloudflare account allocation exhausted — every model will fail the same way
   | 'access' // licence / paid-plan / permission problem for this model
   | 'bad_request' // the model rejected the input (e.g. unsupported parameter)
+  | 'too_large' // the request exceeds what this model / plan accepts (e.g. Groq's tokens-per-minute limit): another model may take it
   | 'timeout'
   | 'aborted'
   | 'empty'
@@ -17,6 +18,8 @@ export class AiError extends Error {
     public readonly kind: AiErrorKind,
     message: string,
     public readonly modelId?: string,
+    /** How long the provider asked us to wait (Retry-After on a 429). */
+    public readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = 'AiError';
@@ -39,7 +42,11 @@ export function classifyAiError(err: unknown, modelId?: string): AiError {
   return new AiError(kind, message, modelId);
 }
 
-/** Does the error warrant trying the next model in the priority list? */
+/**
+ * Does the error warrant trying the next model in the priority list? `account_limit` is the exception that needs care: it says the
+ * whole *provider account* is spent (every Workers AI model fails the same way), so the remaining models of THAT provider are skipped
+ * — but models of another provider are still tried (see AiClient.execute).
+ */
 export function shouldFallback(kind: AiErrorKind): boolean {
   return kind !== 'aborted' && kind !== 'account_limit';
 }

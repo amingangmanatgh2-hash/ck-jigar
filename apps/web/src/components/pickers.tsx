@@ -14,6 +14,7 @@ const AGENT_ICON: Record<string, IconName> = {
   folder: 'file',
   palette: 'image',
   wand: 'sparkles',
+  zap: 'zap',
 };
 
 export const agentIcon = (a: Pick<AgentDto, 'icon'>): IconName => AGENT_ICON[a.icon] ?? 'sparkles';

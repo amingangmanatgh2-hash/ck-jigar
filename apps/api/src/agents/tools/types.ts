@@ -34,6 +34,8 @@ export interface ToolResult {
   verified?: boolean;
   /** Files created by the tool that should be attached to the assistant's reply. */
   generatedFileIds?: string[];
+  /** A pointer the client may follow (open a chat). Stored with the step; the server changes nothing because of it. */
+  action?: RunStepDto['action'];
 }
 
 export class ToolError extends Error {

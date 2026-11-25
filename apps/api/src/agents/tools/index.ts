@@ -3,6 +3,7 @@ import type { RunRow } from '../../services/runs';
 import { getAgent } from '../registry';
 import { fileCategorizeTool, fileListTool, fileReadTool, imageGenerateTool } from './files';
 import { announcePostTool, chatListTool, chatReadTool, messageSendTool, pollCreateTool } from './messaging';
+import { chatOpenTool } from './navigation';
 import {
   historySearchTool,
   memoryProposeTool,
@@ -27,7 +28,7 @@ export const TOOLS: Record<string, ToolDef> = Object.fromEntries(
     memoryProposeTool, historySearchTool,
     webSearchTool,
     fileListTool, fileReadTool, fileCategorizeTool, imageGenerateTool,
-    chatListTool, chatReadTool, messageSendTool, pollCreateTool, announcePostTool,
+    chatListTool, chatReadTool, chatOpenTool, messageSendTool, pollCreateTool, announcePostTool,
   ].map((t) => [t.id, t as ToolDef]),
 );
 

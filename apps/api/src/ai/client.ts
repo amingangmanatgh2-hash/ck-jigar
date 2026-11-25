@@ -1,8 +1,9 @@
-import type { ModelRole } from '@aminchat/shared';
+import type { ModelProviderId, ModelRole } from '@aminchat/shared';
 import type { Env } from '../env';
 import { AppError, unavailable } from '../lib/errors';
 import { SseParser } from '../lib/sse';
 import { estimateTokens, stripThinking } from '../lib/text';
+import { coolDown, isCoolingDown } from './cooldown';
 import { AiError, classifyAiError, shouldFallback, userFacingAiError } from './errors';
 import { isBlocked, loadHealth, recordCallOutcome } from './health';
 import {
@@ -14,6 +15,9 @@ import {
   type Purpose,
 } from './models';
 import { ThinkFilter, normalizeChatResult, parseStreamData, type Usage } from './normalize';
+import { anyProviderConnected, providerConnected } from './providers';
+import { groqRun } from './providers/groq';
+import type { RunFn } from './providers/types';
 import { assertWithinQuota, recordUsage } from './usage';
 
 export type ContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
@@ -63,8 +67,6 @@ const DEFAULT_MAX_TOKENS: Record<Purpose, number> = {
   image: 0,
   summary: 1500,
 };
-
-type RunFn = (id: string, input: unknown, options?: unknown) => Promise<unknown>;
 
 function messagesText(messages: ChatMessage[]): string {
   return messages
@@ -126,11 +128,12 @@ function raceAbort<T>(p: Promise<T>, linked: { signal: AbortSignal; timedOut: ()
 export class AiClient {
   constructor(private readonly env: Env) {}
 
+  /** True when at least one provider (Workers AI binding, Groq key) is configured. */
   get connected(): boolean {
-    return !!this.env.AI;
+    return anyProviderConnected(this.env);
   }
 
-  private run(): RunFn {
+  private workersAi(): RunFn {
     if (!this.env.AI) {
       throw unavailable(
         'Workers AI is not connected in this environment. Deploy to Cloudflare (or run `npm run dev:api:ai` after `wrangler login`) to use AMIN AI.',
@@ -140,20 +143,36 @@ export class AiClient {
     return (id, input, options) => (this.env.AI as unknown as { run: RunFn }).run(id, input, options);
   }
 
+  private runnerFor(spec: ModelSpec): RunFn {
+    return spec.provider === 'groq' ? groqRun(this.env) : this.workersAi();
+  }
+
   /**
-   * Binding options. The AbortSignal is deliberately NOT forwarded: cancellation is implemented by racing the call
-   * (and cancelling the response stream), which works identically for the real binding and for RPC-based test doubles.
+   * Call options. For Workers AI the AbortSignal is deliberately NOT forwarded: cancellation is implemented by racing the call
+   * (and cancelling the response stream), which works identically for the real binding and for RPC-based test doubles. Groq is plain
+   * HTTP, so there the signal does abort the request itself — and with it the billing of tokens nobody will read.
    */
-  private options(purpose: Purpose): Record<string, unknown> {
+  private options(spec: ModelSpec, purpose: Purpose, signal?: AbortSignal): Record<string, unknown> {
+    if (spec.provider === 'groq') return signal ? { signal } : {};
     const o: Record<string, unknown> = { tags: ['amin-chat', `purpose:${purpose}`] };
     if (this.env.AI_GATEWAY_ID) o.gateway = { id: this.env.AI_GATEWAY_ID };
     return o;
   }
 
-  /** Ordered list of models to try for this request (explicit choice first, then the role's priority list). */
-  async candidates(req: Pick<ChatRequest, 'role' | 'modelId' | 'needsVision'>): Promise<ModelSpec[]> {
+  /** Largest prompt (estimated tokens) this model should be sent: its own limit, or the operator's override for Groq. */
+  private maxInput(spec: ModelSpec): number | undefined {
+    const override = spec.provider === 'groq' ? Number(this.env.GROQ_MAX_INPUT_TOKENS) : NaN;
+    return Number.isFinite(override) && override > 0 ? override : spec.maxInputTokens;
+  }
+
+  /**
+   * Ordered list of models to try for this request (explicit choice first, then the role's priority list).
+   * Never contains a model of a provider that is not connected, nor one that cannot take a prompt of this size.
+   */
+  async candidates(req: Pick<ChatRequest, 'role' | 'modelId' | 'needsVision'> & { promptTokens?: number }): Promise<ModelSpec[]> {
     const health = await loadHealth(this.env);
-    const usable = (m: ModelSpec) => !isDeprecated(m) && !isBlocked(health.get(m.id));
+    const reachable = (m: ModelSpec) => providerConnected(this.env, m.provider) && (req.promptTokens === undefined || !this.maxInput(m) || req.promptTokens <= this.maxInput(m)!);
+    const usable = (m: ModelSpec) => !isDeprecated(m) && !isBlocked(health.get(m.id)) && !isCoolingDown(m.id);
     let list = rolePriority(req.role);
     if (req.needsVision) {
       const vision = list.filter((m) => m.capabilities.vision);
@@ -165,9 +184,10 @@ export class AiClient {
       if (chosen && SELECTABLE_CHAT_MODELS.includes(chosen.id) && usable(chosen) && (!req.needsVision || chosen.capabilities.vision)) ordered.push(chosen);
     }
     for (const m of list) if (!ordered.includes(m)) ordered.push(m);
-    const filtered = ordered.filter(usable);
+    const eligible = ordered.filter(reachable);
+    const filtered = eligible.filter(usable);
     // If every model was recently marked unavailable the verdicts may simply be stale: try them anyway rather than fail blind.
-    return filtered.length > 0 ? filtered : ordered;
+    return filtered.length > 0 ? filtered : eligible;
   }
 
   private buildInput(spec: ModelSpec, req: ChatRequest, tuned: boolean, stream: boolean): Record<string, unknown> {
@@ -179,7 +199,7 @@ export class AiClient {
     if (tuned && spec.tune) Object.assign(input, spec.tune(req.purpose));
     if (stream) {
       input.stream = true;
-      if (spec.api === 'chat') input.stream_options = { include_usage: true };
+      if (spec.api === 'chat' && spec.provider === 'workers-ai') input.stream_options = { include_usage: true };
     }
     return input;
   }
@@ -196,16 +216,21 @@ export class AiClient {
   }
 
   private async execute(req: ChatRequest, stream: boolean, onDelta?: (t: string) => void | Promise<void>): Promise<ChatOutcome> {
-    const run = this.run();
+    if (!this.connected) {
+      throw unavailable('No AI provider is connected in this deployment (Workers AI binding or GROQ_API_KEY), so AMIN AI cannot answer.', 'AI_NOT_CONNECTED');
+    }
     await assertWithinQuota(this.env, req.userId);
-    const models = await this.candidates(req);
+    const promptTokensEstimate = estimateTokens(messagesText(req.messages));
+    const models = await this.candidates({ ...req, promptTokens: promptTokensEstimate });
     if (models.length === 0) throw unavailable('No AI model is configured for this task.', 'AI_NO_MODEL');
 
     let firstChoice = models[0]!.id;
     let lastError: AiError | null = null;
-    const promptTokensEstimate = estimateTokens(messagesText(req.messages));
+    /** Providers whose whole account is spent (Workers AI: the daily allowance): their remaining models are skipped, other providers are not. */
+    const exhausted = new Set<ModelProviderId>();
 
     for (const spec of models) {
+      if (exhausted.has(spec.provider)) continue;
       let emitted = false;
       let streamed = '';
       let tuned = true;
@@ -215,7 +240,7 @@ export class AiClient {
         const linked = linkSignals(req.signal, req.timeoutMs ?? (stream ? 60_000 : 90_000));
         try {
           const input = this.buildInput(spec, req, tuned, stream);
-          const raw = await raceAbort(run(spec.id, input, this.options(req.purpose)), linked, spec.id);
+          const raw = await raceAbort(this.runnerFor(spec)(spec.id, input, this.options(spec, req.purpose, linked.signal)), linked, spec.id);
           let text = '';
           let usage: Usage | null = null;
           if (stream && raw instanceof ReadableStream) {
@@ -305,6 +330,13 @@ export class AiClient {
           lastError = err;
           // Once text reached the user we cannot silently switch models.
           if (emitted) throw userFacingAiError(err);
+          // The provider's whole allowance is spent: its other models would fail the same way, another provider's may not.
+          if (err.kind === 'account_limit') {
+            exhausted.add(spec.provider);
+            break;
+          }
+          // A refusal for lack of capacity (Groq's per-minute limits): leave that model alone until the provider says it may be asked again.
+          if (err.kind === 'capacity' && spec.provider === 'groq') coolDown(spec.id, err.retryAfterMs ?? 20_000);
           if (!shouldFallback(err.kind)) throw userFacingAiError(err);
           break;
         }
@@ -377,7 +409,7 @@ export class AiClient {
 
   /** Speech to text. Returns the transcript. */
   async transcribe(userId: string, bytes: Uint8Array, opts: { language?: string; runId?: string | null; signal?: AbortSignal } = {}): Promise<{ text: string; modelId: string }> {
-    const run = this.run();
+    const run = this.workersAi();
     await assertWithinQuota(this.env, userId);
     const health = await loadHealth(this.env);
     const models = rolePriority('asr').filter((m) => !isDeprecated(m) && !isBlocked(health.get(m.id)));
@@ -389,7 +421,7 @@ export class AiClient {
       try {
         const input: Record<string, unknown> = { audio: bytesToBase64(bytes), task: 'transcribe', vad_filter: true };
         if (opts.language) input.language = opts.language;
-        const raw = (await raceAbort(run(spec.id, input, this.options('asr')), linked, spec.id)) as { text?: string; transcription_info?: unknown };
+        const raw = (await raceAbort(run(spec.id, input, this.options(spec, 'asr')), linked, spec.id)) as { text?: string; transcription_info?: unknown };
         linked.dispose();
         const text = String(raw?.text ?? '').trim();
         if (!text) throw new AiError('empty', 'No speech was recognised in the audio', spec.id);
@@ -413,7 +445,7 @@ export class AiClient {
 
   /** Text to image. Returns the image bytes. */
   async generateImage(userId: string, prompt: string, opts: { runId?: string | null; signal?: AbortSignal } = {}): Promise<{ bytes: Uint8Array; mime: string; modelId: string }> {
-    const run = this.run();
+    const run = this.workersAi();
     await assertWithinQuota(this.env, userId);
     const health = await loadHealth(this.env);
     const models = rolePriority('image').filter((m) => !isDeprecated(m) && !isBlocked(health.get(m.id)));
@@ -423,7 +455,7 @@ export class AiClient {
       const started = Date.now();
       const linked = linkSignals(opts.signal, 90_000);
       try {
-        const raw = (await raceAbort(run(spec.id, { prompt, steps: 6 }, this.options('image')), linked, spec.id)) as { image?: string } | ReadableStream | Uint8Array;
+        const raw = (await raceAbort(run(spec.id, { prompt, steps: 6 }, this.options(spec, 'image')), linked, spec.id)) as { image?: string } | ReadableStream | Uint8Array;
         linked.dispose();
         let bytes: Uint8Array;
         if (raw instanceof Uint8Array) bytes = raw;

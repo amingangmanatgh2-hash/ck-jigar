@@ -105,6 +105,8 @@ export function UsagePanel({ usage }: { usage: UsageSummaryDto }) {
   );
 }
 
+const PROVIDER_NAME: Record<ModelDto['provider'], string> = { 'workers-ai': 'Workers AI', groq: 'Groq' };
+
 function ModelCard({ m }: { m: ModelDto }) {
   const t = useT();
   const locale = useLocale();
@@ -114,7 +116,9 @@ function ModelCard({ m }: { m: ModelDto }) {
       <header className="row between">
         <div>
           <strong>{m.label}</strong>
-          <div className="muted small">{m.vendor}</div>
+          <div className="muted small">
+            {m.vendor} · {t('model.provider.runsOn', { name: PROVIDER_NAME[m.provider] })}
+          </div>
         </div>
         <ModelStatusBadge model={m} />
       </header>
@@ -196,7 +200,9 @@ export function ModelsScreen() {
     }
   }
 
-  const connected = models?.backend === 'workers-ai';
+  const providers = models?.providers ?? [];
+  const anyConnected = providers.some((p) => p.connected);
+  const groqConnected = providers.some((p) => p.id === 'groq' && p.connected);
   return (
     <section className="page" aria-label={t('nav.models')}>
       <header className="page-head">
@@ -212,10 +218,24 @@ export function ModelsScreen() {
         {loading && !models && <Spinner label={t('common.loading')} />}
         {models && (
           <>
-            <div className={`banner ${connected ? 'banner-info' : 'banner-warn'}`} role="status" data-testid="backend-banner" data-backend={models.backend}>
-              <Icon name={connected ? 'cpu' : 'alert'} size={18} />
-              <span>{connected ? t('model.backend.connected') : t('model.backend.unavailable')}</span>
-            </div>
+            {!anyConnected ? (
+              <div className="banner banner-warn" role="status" data-testid="backend-banner" data-backend="unavailable">
+                <Icon name="alert" size={18} />
+                <span>{t('model.provider.allDown')}</span>
+              </div>
+            ) : (
+              providers.map((p) => (
+                <div key={p.id} className="banner banner-info" role="status" data-testid="backend-banner" data-provider={p.id} data-connected={p.connected}>
+                  <Icon name={p.connected ? 'cpu' : 'info'} size={18} />
+                  <span>{t(p.connected ? 'model.provider.connected' : 'model.provider.notConnected', { name: p.label })}</span>
+                </div>
+              ))
+            )}
+            {groqConnected && (
+              <p className="muted small" data-testid="groq-privacy">
+                {t('model.provider.groqPrivacy')}
+              </p>
+            )}
 
             <section className="panel" aria-label={t('model.defaults')}>
               <h3>{t('model.defaults')}</h3>

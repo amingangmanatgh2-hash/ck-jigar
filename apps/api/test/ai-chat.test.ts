@@ -428,10 +428,10 @@ describe('AMIN AI — search over past conversations', () => {
 });
 
 describe('AMIN AI — agents and models endpoints', () => {
-  it('lists the six agents (plus general and auto) with honest tool availability', async () => {
+  it('lists the six agents (plus general, quick and auto) with honest tool availability', async () => {
     const user = await registerUser('agents');
     const { agents } = await json(await api('GET', '/api/ai/agents', { token: user.token }));
-    expect(agents.map((a: any) => a.id)).toEqual(['auto', 'general', 'personal', 'research', 'coder', 'messenger', 'file', 'creative']);
+    expect(agents.map((a: any) => a.id)).toEqual(['auto', 'general', 'personal', 'research', 'coder', 'messenger', 'file', 'creative', 'quick']);
     const research = agents.find((a: any) => a.id === 'research');
     const search = research.tools.find((t: any) => t.id === 'web_search');
     expect(search.available).toBe(false); // no search provider is configured in the test environment
@@ -448,7 +448,7 @@ describe('AMIN AI — agents and models endpoints', () => {
     const user = await registerUser('models');
     await script([{ when: { purpose: 'health' }, respond: { text: 'ok' } }]);
     const first = await json(await api('GET', '/api/ai/models', { token: user.token }));
-    expect(first.backend).toBe('workers-ai');
+    expect(first.providers.find((p: any) => p.id === 'workers-ai')).toMatchObject({ connected: true });
     for (const m of first.models) expect(['available', 'unavailable', 'unknown']).toContain(m.status);
     // wait for the background probe, then everything the probe could reach is "available"
     const after = await waitFor(async () => {

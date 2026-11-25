@@ -44,6 +44,7 @@ const PATHS = {
   bellOff: 'M13.7 21a2 2 0 0 1-3.4 0M17 17H3s3-2 3-9c0-1 .2-1.900.6-2.700M8.7 3A6 6 0 0 1 18 8c0 2.100.2 3.800.6 5.100M2 2l20 20',
   moon: 'M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z',
   language: 'M5 8l6 6M4 14l6-6 2-3M2 5h12M7 2h1m14 20-5-10-5 10m2-4h6',
+  zap: 'M13 2 4 14h7l-1 8 9-12h-7z',
 } as const;
 
 export type IconName = keyof typeof PATHS;

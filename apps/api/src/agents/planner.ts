@@ -11,6 +11,8 @@ export type ChatFn = (req: Omit<ChatRequest, 'userId' | 'runId' | 'signal'>) => 
 /* ------------------------------------------------------------------------------------------------ router */
 
 const RULES: [ConcreteAgentId, RegExp][] = [
+  // Opening a chat is navigation, not messaging: it must win over the `messenger` words ("chat", "پیام", "گروه").
+  ['quick', /\b(open|show|go to|switch to|take me to|pull up|bring up)\b[^\n]{0,40}\b(chat|conversation|dm)\b|\b(chat|conversation|dm)\b[^\n]{0,40}\b(open|up)\b|(باز\s*کن|بازش\s*کن|باز\s*کنی|نشان\s*بده|نشونم\s*بده|ببر|برو)[^\n]{0,40}(چت|گفتگو|گفت\u200c?وگو)|(چت|گفتگو|گفت\u200c?وگو)[^\n]{0,40}(باز\s*کن|بازش\s*کن|باز\s*کنی|نشان\s*بده|نشونم\s*بده)/i],
   ['personal', /remind|reminder|todo|to-do|task|schedule|deadline|plan my|milestone|یادآور|یادم\s*بنداز|یادآوری|کارها|وظیفه|لیست\s*کار|فهرست\s*کار|برنامه‌?ریزی|پروژه|مهلت/i],
   ['coder', /```|function\b|stack\s*trace|exception|compile|refactor|\bbug\b|\bapi\b|regex|typescript|javascript|python|sql\b|کد\b|برنامه‌?نویس|باگ|خطا.*(کد|برنامه)|الگوریتم/i],
   ['messenger', /send (a )?message|text (him|her|them)|announce|poll\b|reply to|draft (a )?(message|reply)|پیام\s*(بده|بفرست|ارسال)|ارسال|اطلاعیه|نظرسنجی|پاسخ\s*پیشنهاد|گروه|چت/i],

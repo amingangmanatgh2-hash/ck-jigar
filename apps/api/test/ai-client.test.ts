@@ -230,9 +230,18 @@ describe('model availability', () => {
 
   it('shows nothing as ready before anything has been verified', async () => {
     const res = await modelsResponse(env);
-    expect(res.backend).toBe('workers-ai');
-    expect(res.models.every((m) => m.status === 'unknown')).toBe(true);
-    expect(res.models.every((m) => m.reasonCode === 'unverified')).toBe(true);
+    expect(res.providers).toEqual([
+      { id: 'workers-ai', label: 'Cloudflare Workers AI', connected: true },
+      { id: 'groq', label: 'Groq', connected: false },
+    ]);
+    // Workers AI is connected but nothing was checked yet; Groq has no key in this suite, so its models are not offered at all
+    const cf = res.models.filter((m) => m.provider === 'workers-ai');
+    expect(cf.length).toBeGreaterThan(0);
+    expect(cf.every((m) => m.status === 'unknown')).toBe(true);
+    expect(cf.every((m) => m.reasonCode === 'unverified')).toBe(true);
+    const groq = res.models.filter((m) => m.provider === 'groq');
+    expect(groq.length).toBeGreaterThan(0);
+    expect(groq.every((m) => m.status === 'unavailable' && m.reasonCode === 'not_connected' && !m.selectable)).toBe(true);
     expect(Object.values(res.defaults).every((d) => d === null)).toBe(true);
     expect(res.models.every((m) => m.selectable === (m.roles.includes('chat') || m.roles.includes('fast') || m.roles.includes('code')) || !m.selectable)).toBe(true);
   });
@@ -266,7 +275,7 @@ describe('model availability', () => {
 
   it('reports every model unavailable when no Workers AI binding exists', async () => {
     const res = await modelsResponse({ ...env, AI: undefined } as never);
-    expect(res.backend).toBe('unavailable');
+    expect(res.providers.every((p) => !p.connected)).toBe(true);
     expect(res.models.every((m) => m.status === 'unavailable')).toBe(true);
     expect(res.models.every((m) => m.reasonCode === 'not_connected')).toBe(true);
     await expect(new AiClient({ ...env, AI: undefined } as never).chat({ userId: 'u', role: 'chat', purpose: 'chat', messages: [{ role: 'user', content: 'x' }] })).rejects.toMatchObject({

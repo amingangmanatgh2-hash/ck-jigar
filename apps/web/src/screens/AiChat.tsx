@@ -101,7 +101,7 @@ function AiChat({ threadId, resolving }: { threadId: string | null; resolving: b
   const running = isActiveRun(activeRun) || state.messages.some((m) => m.status === 'streaming' && m.senderId !== me.id);
   const streamingMessage = state.messages.find((m) => m.status === 'streaming');
   const liveText = useLiveBody(streamingMessage);
-  const backendDown = models?.backend === 'unavailable';
+  const backendDown = models ? !models.providers.some((p) => p.connected) : false;
 
   // refresh the thread list once a run finishes (the server generates the title after the first answer)
   const lastActive = useRef<string | null>(null);

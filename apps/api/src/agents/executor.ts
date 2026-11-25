@@ -33,7 +33,7 @@ import {
 import { getThreadRow, touchThread, type ThreadRow } from '../services/threads';
 import { payloadHash, splitPayload } from './approvals';
 import { t } from './i18n';
-import { deriveArgs, planSteps, resolveTemplates, routeAgent, type ChatFn, type PriorStep } from './planner';
+import { deriveArgs, heuristicAgent, planSteps, resolveTemplates, routeAgent, type ChatFn, type PriorStep } from './planner';
 import { assistSystemPrompt, systemPrompt, type PromptUser } from './prompts';
 import { AGENTS, isConcreteAgent, type AgentDef } from './registry';
 import { getTool, hasActionTools, toolsFor } from './tools';
@@ -333,7 +333,10 @@ class RunExecutor {
 
   private async routeAuto(): Promise<{ agent: string; reason: string; viaLlm: boolean }> {
     if (this.run.kind === 'assist') return { agent: 'general', reason: 'shared chat', viaLlm: false };
-    if (this.userText.trim().length < 12 && !this.attachmentsList) return { agent: 'general', reason: 'short message', viaLlm: false };
+    if (this.userText.trim().length < 12 && !this.attachmentsList) {
+      // "open Amin's chat" can be short: a quick request is recognised by its keywords, anything else short is just conversation.
+      return heuristicAgent(this.userText) === 'quick' ? { agent: 'quick', reason: 'keyword routing', viaLlm: false } : { agent: 'general', reason: 'short message', viaLlm: false };
+    }
     return routeAgent(this.chat, { text: this.userText, hasAttachments: !!this.attachmentsList, recent: this.recentText() });
   }
 
@@ -602,7 +605,7 @@ class RunExecutor {
     if (result.generatedFileIds?.length) this.generatedFileIds.push(...result.generatedFileIds);
     const data = result.data === undefined ? undefined : safeJsonParse(truncate(JSON.stringify(result.data), 3000, ''));
     await this.markStep(step, 'completed', {
-      output: JSON.stringify({ text: truncate(result.text, OUTPUT_MAX), ...(data === null || data === undefined ? {} : { data }) }),
+      output: JSON.stringify({ text: truncate(result.text, OUTPUT_MAX), ...(data === null || data === undefined ? {} : { data }), ...(result.action ? { action: result.action } : {}) }),
       verified: result.verified ? 1 : 0,
       error: null,
       error_code: null,
@@ -766,6 +769,7 @@ class RunExecutor {
         role,
         purpose: this.run.kind === 'assist' ? 'assist' : 'chat',
         messages,
+        maxTokens: this.run.kind === 'assist' ? undefined : this.agent.maxAnswerTokens,
         modelId: this.run.model_id,
         needsVision,
         signal: this.signal,

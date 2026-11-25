@@ -44,8 +44,12 @@ export const LIMITS = {
   pollOptionChars: 100,
 } as const;
 
-export const AGENT_IDS = ['auto', 'general', 'personal', 'research', 'coder', 'messenger', 'file', 'creative'] as const;
+export const AGENT_IDS = ['auto', 'general', 'personal', 'research', 'coder', 'messenger', 'file', 'creative', 'quick'] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
+
+/** Where a model runs. Workers AI is the main infrastructure; Groq is the second, optional provider (fast tasks and fallback). */
+export const MODEL_PROVIDERS = ['workers-ai', 'groq'] as const;
+export type ModelProviderId = (typeof MODEL_PROVIDERS)[number];
 
 export const MODEL_ROLES = ['chat', 'fast', 'code', 'vision', 'asr', 'embedding', 'image'] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];

@@ -13,6 +13,8 @@ export interface AgentDef {
   tools: readonly string[];
   /** English instructions (the model answers in the user's language). */
   instructions: string;
+  /** Upper bound for the final answer (default: the model call's own default). Short-answer agents set it low so they stay fast. */
+  maxAnswerTokens?: number;
 }
 
 export const AGENTS: Record<ConcreteAgentId, AgentDef> = {
@@ -94,6 +96,23 @@ export const AGENTS: Record<ConcreteAgentId, AgentDef> = {
     instructions:
       'You are the creative partner: ideas, stories, slogans and content in the requested tone and voice. Offer a few distinct options when brainstorming. ' +
       'Use image_generate only when the user asks for an image, and write the image prompt in English with concrete visual detail.',
+  },
+  quick: {
+    id: 'quick',
+    name: { fa: 'سریع', en: 'Quick' },
+    description: {
+      fa: 'کارهای کوتاه و فوری: باز کردن گفتگو با یک نفر، فهرست گفتگوها، دیدن کارها و یادآورها — با مدل سریع',
+      en: 'Quick actions: open a chat with someone, list your chats, check tasks and reminders — answered by the fast model',
+    },
+    icon: 'zap',
+    modelRole: 'fast',
+    tools: ['chat_open', 'chat_list', 'todo_list', 'reminder_list'],
+    maxAnswerTokens: 700,
+    instructions:
+      'You are the quick assistant: short, direct answers and quick actions, in at most a few sentences. ' +
+      'To open a chat with a person or a group use chat_open: it only gives the user a button to open that chat, it never sends or creates anything, ' +
+      'so say that the chat is ready to open (never claim it was sent or that the person was contacted). If chat_open found several matches, ask which one. ' +
+      'If the request is long, complex or needs research, code or files, say so in one sentence and suggest the matching agent instead of attempting it.',
   },
 };
 

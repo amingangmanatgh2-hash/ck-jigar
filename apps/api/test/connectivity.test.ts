@@ -260,6 +260,22 @@ describe('advertised endpoints and relays', () => {
     expect(body.endpoints).toEqual(['https://relay-a.example.test', 'https://relay-b.example.test:8443']);
   });
 
+  it('says, without logging in, which AI services have credentials — yes or no, never a value', async () => {
+    const before = await json(await api('GET', '/api/health'));
+    expect(before.ai).toEqual({ 'workers-ai': true, groq: false }); // the test environment binds Workers AI and has no Groq key
+    const SECRET = 'gsk_HEALTH_LEAK_CHECK_1234567890';
+    (env as unknown as Record<string, unknown>).GROQ_API_KEY = SECRET;
+    try {
+      const res = await api('GET', '/api/health');
+      const text = await res.text();
+      expect(JSON.parse(text).ai).toEqual({ 'workers-ai': true, groq: true });
+      expect(text).not.toContain('HEALTH_LEAK');
+    } finally {
+      delete (env as unknown as Record<string, unknown>).GROQ_API_KEY;
+    }
+    expect((await json(await api('GET', '/api/health'))).ai.groq).toBe(false);
+  });
+
   it('trusts its own relays as browser origins, and nobody else', async () => {
     const preflight = (origin: string) => api('OPTIONS', '/api/auth/login', { headers: { Origin: origin, 'Access-Control-Request-Method': 'POST' } });
     const ok = await preflight('https://relay-a.example.test');

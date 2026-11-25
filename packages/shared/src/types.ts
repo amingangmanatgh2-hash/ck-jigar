@@ -1,5 +1,5 @@
 import type { AccessDecision, AiAccessMode, AiInvokeRoles, GroupAiLevel, MemberRole } from './access';
-import type { AgentId, Locale, MemoryKind, ModelRole } from './constants';
+import type { AgentId, Locale, MemoryKind, ModelProviderId, ModelRole } from './constants';
 
 /* ------------------------------------------------------------------ users & auth */
 
@@ -198,6 +198,14 @@ export type RunStatus = 'pending' | 'planning' | 'awaiting_approval' | 'running'
 export type StepStatus = 'pending' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'skipped' | 'cancelled';
 export type ToolRisk = 'read' | 'write' | 'sensitive';
 
+/**
+ * Something the client can offer or do after a step. It is only ever a *pointer*: the server has not changed anything because of it.
+ * `open_chat` with a `conversationId` navigates to an existing chat; with only a `userId` the user may start that chat by tapping.
+ */
+export type StepAction =
+  | { type: 'enable_ai_access'; conversationId: string; conversationTitle: string | null }
+  | { type: 'open_chat'; conversationId: string | null; userId: string | null; title: string };
+
 export interface RunStepDto {
   id: string;
   idx: number;
@@ -215,8 +223,8 @@ export interface RunStepDto {
   verified: boolean;
   startedAt: number | null;
   finishedAt: number | null;
-  /** Hint for the UI: a one-click action that resolves the failure (e.g. enabling AI access for a chat). */
-  action?: { type: 'enable_ai_access'; conversationId: string; conversationTitle: string | null } | null;
+  /** Hint for the UI: a one-click action (enabling AI access for a chat after a failure, or opening a chat the user asked for). */
+  action?: StepAction | null;
 }
 
 export interface ApprovalDto {
@@ -285,6 +293,8 @@ export interface ModelDto {
   id: string;
   label: string;
   vendor: string;
+  /** Where the model runs (its provider). Data sent to the model is processed there. */
+  provider: ModelProviderId;
   roles: ModelRole[];
   capabilities: { vision: boolean; tools: boolean; json: boolean; reasoning: boolean; streaming: boolean };
   contextWindow: number;
@@ -300,8 +310,15 @@ export interface ModelDto {
   selectable: boolean;
 }
 
+export interface ProviderDto {
+  id: ModelProviderId;
+  label: string;
+  /** False when the server has no credentials/binding for this provider (its models are then never shown as ready). */
+  connected: boolean;
+}
+
 export interface ModelsResponse {
-  backend: 'workers-ai' | 'unavailable';
+  providers: ProviderDto[];
   models: ModelDto[];
   defaults: Record<ModelRole, string | null>;
   checkedAt: number | null;
@@ -402,6 +419,11 @@ export interface HealthDto {
   environment: string;
   /** Alternative addresses of this service (relays), advertised so that clients can keep working when the main address is blocked. */
   endpoints: string[];
+  /**
+   * Which AI services this deployment has credentials for (yes/no only — never a value). It lets a deployment be checked without
+   * logging in; whether a model really answers is what the signed-in availability check ("Models & usage") finds out.
+   */
+  ai: Record<ModelProviderId, boolean>;
 }
 
 export type RealtimeEvent =

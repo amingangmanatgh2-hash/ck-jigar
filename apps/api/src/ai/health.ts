@@ -4,6 +4,8 @@ import { all } from '../db/helpers';
 import type { Env } from '../env';
 import { classifyAiError, marksUnavailable } from './errors';
 import { MODELS, ROLE_PRIORITY, SELECTABLE_CHAT_MODELS, getModel, isDeprecated, type ModelSpec } from './models';
+import { PROVIDER_LABEL, anyProviderConnected, providerConnected, providerList } from './providers';
+import { groqCatalog, groqRun } from './providers/groq';
 
 export interface HealthRow {
   model_id: string;
@@ -73,17 +75,22 @@ async function catalogIds(env: Env): Promise<Set<string> | null> {
 }
 
 /**
- * Verifies model availability against the real Workers AI account:
- *  1. catalog lookup (env.AI.models) when supported, then
- *  2. a minimal real inference for text models (the only proof that the model really answers for *this* account).
+ * Verifies model availability against the real providers (Workers AI account, Groq key):
+ *  1. catalog lookup (env.AI.models for Workers AI, GET /models for Groq) when supported, then
+ *  2. a minimal real inference for text models (the only proof that the model really answers for *this* account/key).
  * ASR/image models are not probed (they would cost money per check) — they are "available" only if the catalog lists them.
+ * Models of a provider that is not connected are not touched: they are shown as "not connected" without any verdict.
  */
 export async function refreshHealth(env: Env, only?: string[]): Promise<HealthRow[]> {
-  if (!env.AI) return [];
-  const catalog = await catalogIds(env);
-  const targets = MODELS.filter((m) => !only || only.includes(m.id));
+  if (!anyProviderConnected(env)) return [];
+  const targets = MODELS.filter((m) => (!only || only.includes(m.id)) && providerConnected(env, m.provider));
+  const [workersCatalog, groqIds] = await Promise.all([
+    targets.some((m) => m.provider === 'workers-ai') ? catalogIds(env) : null,
+    targets.some((m) => m.provider === 'groq') ? groqCatalog(env) : null,
+  ]);
   const probe = async (spec: ModelSpec) => {
     if (isDeprecated(spec)) return saveHealth(env, spec.id, 'unavailable', `Deprecated on ${spec.deprecatedOn}`);
+    const catalog = spec.provider === 'groq' ? groqIds : workersCatalog;
     const listed = catalog ? catalog.has(spec.id) : null;
     if (spec.api === 'asr' || spec.api === 'image') {
       if (listed === true) return saveHealth(env, spec.id, 'available', null, { catalogListed: true });
@@ -93,10 +100,16 @@ export async function refreshHealth(env: Env, only?: string[]): Promise<HealthRo
     const started = Date.now();
     try {
       const input: Record<string, unknown> = { messages: [{ role: 'user', content: 'Reply with the single word: ok' }], max_tokens: 24, ...(spec.tune?.('health') ?? {}) };
-      const options: Record<string, unknown> = { tags: ['amin-chat', 'purpose:health'] };
-      if (env.AI_GATEWAY_ID) options.gateway = { id: env.AI_GATEWAY_ID };
-      const out = await (env.AI as unknown as { run(id: string, i: unknown, o?: unknown): Promise<unknown> }).run(spec.id, input, options);
-      if (out === undefined || out === null) throw new Error('empty response');
+      let out: unknown;
+      if (spec.provider === 'groq') {
+        out = await groqRun(env)(spec.id, input, { signal: AbortSignal.timeout(30_000) });
+        if (!Array.isArray((out as { choices?: unknown })?.choices) || (out as { choices: unknown[] }).choices.length === 0) throw new Error('Groq answered without a completion');
+      } else {
+        const options: Record<string, unknown> = { tags: ['amin-chat', 'purpose:health'] };
+        if (env.AI_GATEWAY_ID) options.gateway = { id: env.AI_GATEWAY_ID };
+        out = await (env.AI as unknown as { run(id: string, i: unknown, o?: unknown): Promise<unknown> }).run(spec.id, input, options);
+        if (out === undefined || out === null) throw new Error('empty response');
+      }
       await saveHealth(env, spec.id, 'available', null, { catalogListed: listed, latencyMs: Date.now() - started });
     } catch (err) {
       const e = classifyAiError(err, spec.id);
@@ -110,9 +123,10 @@ export async function refreshHealth(env: Env, only?: string[]): Promise<HealthRo
 }
 
 export async function ensureFreshHealth(env: Env, ctx?: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
-  if (!env.AI) return;
+  if (!anyProviderConnected(env)) return;
   const health = await loadHealth(env);
   const stale = MODELS.some((m) => {
+    if (!providerConnected(env, m.provider)) return false;
     const h = health.get(m.id);
     return !h || Date.now() - h.checked_at > MODEL_HEALTH_TTL_MS;
   });
@@ -122,13 +136,14 @@ export async function ensureFreshHealth(env: Env, ctx?: { waitUntil(p: Promise<u
   else await work;
 }
 
-export function toModelDto(spec: ModelSpec, row: HealthRow | undefined, aiConnected: boolean): ModelDto {
+/** `connected`: the model's own provider has credentials in this environment. */
+export function toModelDto(spec: ModelSpec, row: HealthRow | undefined, connected: boolean): ModelDto {
   let status: ModelDto['status'];
   let reason: string | null;
   let reasonCode: ModelDto['reasonCode'] = null;
-  if (!aiConnected) {
+  if (!connected) {
     status = 'unavailable';
-    reason = 'Workers AI is not connected in this environment';
+    reason = `${PROVIDER_LABEL[spec.provider]} is not connected in this environment`;
     reasonCode = 'not_connected';
   } else if (isDeprecated(spec)) {
     status = 'unavailable';
@@ -153,6 +168,7 @@ export function toModelDto(spec: ModelSpec, row: HealthRow | undefined, aiConnec
     id: spec.id,
     label: spec.label,
     vendor: spec.vendor,
+    provider: spec.provider,
     roles: spec.roles,
     capabilities: spec.capabilities,
     contextWindow: spec.contextWindow,
@@ -169,8 +185,7 @@ export function toModelDto(spec: ModelSpec, row: HealthRow | undefined, aiConnec
 
 export async function modelsResponse(env: Env): Promise<ModelsResponse> {
   const health = await loadHealth(env);
-  const connected = !!env.AI;
-  const models = MODELS.map((m) => toModelDto(m, health.get(m.id), connected));
+  const models = MODELS.map((m) => toModelDto(m, health.get(m.id), providerConnected(env, m.provider)));
   const defaults = {} as Record<ModelRole, string | null>;
   for (const role of MODEL_ROLES) {
     // The default shown to the user is the first model that is verified available — never an unverified one.
@@ -178,7 +193,7 @@ export async function modelsResponse(env: Env): Promise<ModelsResponse> {
     defaults[role] = first?.id ?? null;
   }
   const checked = [...health.values()].reduce((max, r) => Math.max(max, r.checked_at), 0);
-  return { backend: connected ? 'workers-ai' : 'unavailable', models, defaults, checkedAt: checked || null };
+  return { providers: providerList(env), models, defaults, checkedAt: checked || null };
 }
 
 export { getModel };

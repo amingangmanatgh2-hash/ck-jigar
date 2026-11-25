@@ -12,6 +12,7 @@ import type { Env } from '../env';
 import { badRequest, conflict, forbidden, notFound, rateLimited, unavailable } from '../lib/errors';
 import { publishToUsers } from '../lib/realtime';
 import { safeJsonParse, truncate } from '../lib/text';
+import { anyProviderConnected } from '../ai/providers';
 import { getModel, SELECTABLE_CHAT_MODELS } from '../ai/models';
 import { loadHealth } from '../ai/health';
 import { assertWithinQuota } from '../ai/usage';
@@ -55,7 +56,7 @@ export interface TurnResult {
 /* ------------------------------------------------------------------------------------------------ guards */
 
 export function requireAiBackend(env: Env): void {
-  if (!env.AI) throw unavailable('Workers AI is not connected in this deployment, so AMIN AI cannot answer.', 'AI_NOT_CONNECTED');
+  if (!anyProviderConnected(env)) throw unavailable('No AI provider (Workers AI or Groq) is connected in this deployment, so AMIN AI cannot answer.', 'AI_NOT_CONNECTED');
 }
 
 export const MAX_ACTIVE_RUNS_PER_USER = 3;

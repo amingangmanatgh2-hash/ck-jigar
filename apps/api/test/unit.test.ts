@@ -17,10 +17,13 @@ describe('model registry', () => {
     for (const role of ['chat', 'fast', 'code', 'vision', 'asr', 'image'] as const) expect(ROLE_PRIORITY[role].length).toBeGreaterThan(0);
   });
 
-  it('is the ONLY place where Workers AI model identifiers appear in the source', () => {
+  it('is the ONLY place where model identifiers appear in the source (Workers AI and Groq alike)', () => {
     const files = import.meta.glob('../src/**/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+    // every id the registry knows (so a provider added later is covered without touching this test), plus the Workers AI prefixes
+    const ids = MODELS.map((m) => m.id);
+    expect(ids.some((id) => !id.startsWith('@cf/'))).toBe(true); // …and that really includes the non-Cloudflare ones
     const offenders = Object.entries(files)
-      .filter(([path, content]) => !path.endsWith('/ai/models.ts') && /@cf\/|@hf\//.test(content))
+      .filter(([path, content]) => !path.endsWith('/ai/models.ts') && (/@cf\/|@hf\//.test(content) || ids.some((id) => content.includes(id))))
       .map(([path]) => path);
     expect(offenders).toEqual([]);
     expect(Object.keys(files).length).toBeGreaterThan(20);

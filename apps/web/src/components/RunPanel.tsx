@@ -71,6 +71,7 @@ function StepRow({ step }: { step: RunStepDto }) {
           </p>
         )}
         {step.action?.type === 'enable_ai_access' && <EnableAccess conversationId={step.action.conversationId} title={step.action.conversationTitle} />}
+        {step.action?.type === 'open_chat' && <OpenChat action={step.action} />}
         {detail && (
           <>
             <button type="button" className="link-btn small" aria-expanded={open} onClick={() => setOpen(!open)}>
@@ -85,6 +86,43 @@ function StepRow({ step }: { step: RunStepDto }) {
         )}
       </div>
     </li>
+  );
+}
+
+/**
+ * The chat the Quick agent found. Only the user's tap opens it — or, for a person there is no chat with yet, starts it: the assistant
+ * itself never navigates and never creates a chat.
+ */
+function OpenChat({ action }: { action: Extract<NonNullable<RunStepDto['action']>, { type: 'open_chat' }> }) {
+  const t = useT();
+  const errText = useErrorText();
+  const [busy, setBusy] = useState(false);
+  const existing = action.conversationId !== null;
+  return (
+    <Button
+      busy={busy}
+      icon={existing ? 'chat' : 'plus'}
+      data-testid="open-chat-action"
+      onClick={async () => {
+        if (action.conversationId) {
+          navigate(`/c/${action.conversationId}`);
+          return;
+        }
+        if (!action.userId) return;
+        setBusy(true);
+        try {
+          const { conversation } = await Convs.direct(action.userId, false);
+          upsertConversation(conversation);
+          navigate(`/c/${conversation.id}`);
+        } catch (err) {
+          toast(errText(err), 'error');
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {t(existing ? 'run.openChat' : 'run.startChat', { chat: action.title })}
+    </Button>
   );
 }
 

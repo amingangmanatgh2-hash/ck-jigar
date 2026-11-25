@@ -1,4 +1,4 @@
-import type { ApprovalDto, MessageDto, RunDto, RunStepDto, StorageStatusDto } from '@aminchat/shared';
+import type { ApprovalDto, MessageDto, ModelDto, ModelsResponse, ProviderDto, RunDto, RunStepDto, StorageStatusDto, UsageSummaryDto } from '@aminchat/shared';
 
 export const message = (o: Partial<MessageDto> = {}): MessageDto => ({
   id: 'm1',
@@ -79,4 +79,42 @@ export const storageStatus = (o: Omit<Partial<StorageStatusDto>, 'cold'> & { col
   attention: null,
   ...o,
   cold: { configured: true, health: 'ok', error: null, errorAt: null, okAt: null, folderId: 'fld1', files: 4, bytes: 20 * 1024 ** 2, account: null, ...o.cold },
+});
+
+export const model = (o: Partial<ModelDto> = {}): ModelDto => ({
+  id: '@cf/google/gemma-4-26b-a4b-it',
+  label: 'Gemma 4 26B',
+  vendor: 'Google',
+  provider: 'workers-ai',
+  roles: ['chat'],
+  capabilities: { vision: true, tools: true, json: true, reasoning: false, streaming: true },
+  contextWindow: 256_000,
+  pricing: null,
+  deprecatedOn: null,
+  status: 'available',
+  reason: null,
+  reasonCode: null,
+  checkedAt: 1_000,
+  latencyMs: 420,
+  selectable: true,
+  ...o,
+});
+
+export const provider = (o: Partial<ProviderDto> = {}): ProviderDto => ({ id: 'workers-ai', label: 'Cloudflare Workers AI', connected: true, ...o });
+
+export const modelsResponse = (o: Partial<ModelsResponse> = {}): ModelsResponse => ({
+  providers: [provider(), provider({ id: 'groq', label: 'Groq' })],
+  models: [model(), model({ id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B', vendor: 'OpenAI', provider: 'groq', roles: ['fast', 'chat'] })],
+  defaults: { chat: '@cf/google/gemma-4-26b-a4b-it', fast: 'openai/gpt-oss-20b', code: null, vision: null, asr: null, embedding: null, image: null },
+  checkedAt: 1_000,
+  ...o,
+});
+
+export const usageSummary = (o: Partial<UsageSummaryDto> = {}): UsageSummaryDto => ({
+  quota: { dailyTokens: 100_000, dailyRequests: 200, monthlyTokens: 2_000_000, custom: false },
+  today: { tokens: 0, requests: 0, errors: 0 },
+  month: { tokens: 0, requests: 0 },
+  byDay: [],
+  byModel: [],
+  ...o,
 });

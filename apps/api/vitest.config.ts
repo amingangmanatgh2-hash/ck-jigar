@@ -20,10 +20,14 @@ export default defineConfig({
           serviceBindings: {
             AI: { name: 'fake-ai', entrypoint: 'FakeAI' },
             GOOGLE_API: { name: 'fake-google', entrypoint: 'FakeGoogle' },
+            // Groq is bound as a fake too, but it has no API key by default: Groq stays "not connected" (and is never called) until a
+            // suite switches it on (test/groq-helpers.ts), so the Workers AI suites keep their exact behaviour.
+            GROQ_API: { name: 'fake-groq', entrypoint: 'FakeGroq' },
           },
           workers: [
             { name: 'fake-ai', modules: true, scriptPath: 'test/fake-ai/worker.mjs', compatibilityDate: '2026-09-20' },
             { name: 'fake-google', modules: true, scriptPath: 'test/fake-google/worker.mjs', compatibilityDate: '2026-09-20' },
+            { name: 'fake-groq', modules: true, scriptPath: 'test/fake-groq/worker.mjs', compatibilityDate: '2026-09-20' },
           ],
         },
       };

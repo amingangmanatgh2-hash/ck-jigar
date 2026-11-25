@@ -1,4 +1,5 @@
 import { hasAiMention, type AccessDecision, type AiTriggerResult, type MessageDto } from '@aminchat/shared';
+import { anyProviderConnected } from '../ai/providers';
 import { assertWithinQuota } from '../ai/usage';
 import { RATE_LIMITS } from '../config/limits';
 import type { Env } from '../env';
@@ -38,7 +39,7 @@ export async function triggerAssistIfMentioned(
     const d = DENIAL_TEXT[decision.reason ?? 'off'] ?? DENIAL_TEXT.off!;
     return { triggered: false, denied: { code: d.code, message: d.message, canEnable: d.canEnable } };
   }
-  if (!env.AI) return { triggered: false, denied: { code: 'AI_NOT_CONNECTED', message: 'Workers AI is not connected in this deployment.' } };
+  if (!anyProviderConnected(env)) return { triggered: false, denied: { code: 'AI_NOT_CONNECTED', message: 'No AI provider is connected in this deployment.' } };
 
   try {
     await consume(env, 'ai', user.id, RATE_LIMITS.ai);

@@ -1,9 +1,7 @@
 /**
- * Normalisation of Workers AI responses.
- *
- * Workers AI has (at least) two chat response families:
- *  - OpenAI chat-completions shape (newer models):  { choices: [{ message: { content, tool_calls }, finish_reason }], usage }
- *  - legacy shape:                                  { response: string | object, tool_calls: [...], usage }  (or a bare string)
+ * Normalisation of chat responses (Workers AI and Groq). There are (at least) two response families:
+ *  - OpenAI chat-completions shape (newer Workers AI models, and Groq):  { choices: [{ message: { content, tool_calls }, finish_reason }], usage }
+ *  - legacy shape (older Workers AI models):                             { response: string | object, tool_calls: [...], usage }  (or a bare string)
  * Streaming responses are SSE with the corresponding chunk shapes. Everything is converted into one internal format,
  * so the rest of the system never has to care which model answered.
  */
@@ -31,7 +29,8 @@ const isObj = (v: unknown): v is Record<string, any> => typeof v === 'object' &&
 
 function usageOf(raw: unknown): Usage | null {
   if (!isObj(raw)) return null;
-  const u = raw.usage;
+  // OpenAI-style `usage`; Groq additionally reports it in `x_groq.usage` on the last chunk of a stream.
+  const u = isObj(raw.usage) ? raw.usage : isObj(raw.x_groq) ? raw.x_groq.usage : undefined;
   if (!isObj(u)) return null;
   const input = Number(u.prompt_tokens ?? u.input_tokens ?? 0);
   const output = Number(u.completion_tokens ?? u.output_tokens ?? 0);
