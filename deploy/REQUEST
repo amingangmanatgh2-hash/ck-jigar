@@ -1,5 +1,5 @@
-check
+deploy
 # Line 1 is "check" (run the plan and the tests only; nothing is published) or "deploy" (publish to Cloudflare).
 # A commit that changes this file, on Main or on an arena/* branch, starts the workflow "Deploy to Cloudflare" (.github/workflows/deploy.yml).
 # Line 4 and below are free notes: change them to start another run.
-note: rehearsal, no secrets are used
+note: first real deployment. It needs the repository secrets CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN (GROQ_API_KEY is optional); without them the preflight lists what is missing and nothing is published. After adding them, use "Re-run all jobs" on the run page (docs/deploy.md).
