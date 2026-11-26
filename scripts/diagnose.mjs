@@ -47,13 +47,13 @@ function titleOf(body) {
 }
 
 async function main() {
-  const panel = await statusOf('https://zeus-lite.amin-ck.workers.dev/?debug=1');
+  const panel = await statusOf('https://zeus-panel.amin-ck.workers.dev/?debug=1');
   say('panel', `${panel.status} title="${titleOf(panel.body)}"`);
 
   const old = await statusOf('https://amin-chat.amin-ck.workers.dev/api/health');
   say('oldWorker', `${old.status} ${old.body.slice(0, 60)}`);
 
-  const plain = await statusOf('https://zeus-lite.amin-ck.workers.dev/');
+  const plain = await statusOf('https://zeus-panel.amin-ck.workers.dev/');
   say('panelNoDebug', `${plain.status} title="${titleOf(plain.body)}"`);
 
   // the same bundle under another name: a fresh deployment of a fresh worker
@@ -73,6 +73,18 @@ async function main() {
     .catch((err) => ({ error: String(err) }));
   const databases = (listed.result ?? []).map((db) => `${db.name}:${db.uuid ?? db.id}`);
   say('databases', databases.join(', ') || JSON.stringify(listed).slice(0, 200));
+
+  // the settings of the old, always-500 script next to a working one: the difference is the answer
+  const settingsOf = async (name) => {
+    const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${name}/settings`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const json = await response.json().catch(() => ({}));
+    const r = json.result ?? {};
+    return `date=${r.compatibility_date} flags=${JSON.stringify(r.compatibility_flags)} usage=${r.usage_model} bindings=${JSON.stringify((r.bindings ?? []).map((b) => `${b.type}:${b.name}`))}`;
+  };
+  say('settingsOld', await settingsOf('zeus-lite').catch((e) => String(e)));
+  say('settingsWorking', await settingsOf('zeus-dbtest').catch((e) => String(e)));
 
   const generated = JSON.parse(readFileSync(`${workerDir}wrangler.generated.jsonc`, 'utf8'));
   const bound = generated.d1_databases?.[0]?.database_id;

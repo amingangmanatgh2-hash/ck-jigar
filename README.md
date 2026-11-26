@@ -11,10 +11,10 @@ A VLESS panel that runs entirely on **Cloudflare Workers + D1**, plus two client
 
 | | |
 |---|---|
-| آدرس پنل | https://zeus-lite.amin-ck.workers.dev |
+| آدرس پنل | https://zeus-panel.amin-ck.workers.dev |
 | رمز اولیه | `amin_ck` — از دکمهٔ 🔑 **تغییر رمز** عوضش کنید |
-| لینک اشتراک | `https://zeus-lite.amin-ck.workers.dev/sub/<token>` |
-| صفحهٔ کاربر | `https://zeus-lite.amin-ck.workers.dev/status/<token>` |
+| لینک اشتراک | `https://zeus-panel.amin-ck.workers.dev/sub/<token>` |
+| صفحهٔ کاربر | `https://zeus-panel.amin-ck.workers.dev/status/<token>` |
 
 ### چه کاری می‌کند (فارسی)
 

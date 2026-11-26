@@ -21,7 +21,7 @@ import { credentials } from './env.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const workerDir = `${root}worker/`;
 const DB_NAME = 'zeus-db';
-const WORKER_NAME = 'zeus-lite';
+const WORKER_NAME = 'zeus-panel';
 const GENERATED_CONFIG = 'wrangler.generated.jsonc';
 const dryRun = process.argv.includes('--dry-run');
 
