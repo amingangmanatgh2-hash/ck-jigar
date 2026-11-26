@@ -3,13 +3,10 @@
  * Run by the deploy workflow when the live check fails: put the reason into an annotation, because the run's log
  * is not always readable from where this is being looked at.
  *
- * It answers three questions in one line:
- *   1. what does the panel answer right now (status and the first characters of the body)?
- *   2. what does `wrangler deployments list` say about the worker?
- *   3. does the same panel work under a different worker name (so: the code, or this deployment)?
+ * It answers, in one line: what the panel answers right now, what the database says, what the Worker's settings
+ * are, and what `wrangler tail` saw while a request was made. It changes nothing.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { credentials } from './env.mjs';
@@ -93,40 +90,6 @@ async function main() {
     say('d1', `${db?.num_tables ?? '?'} tables | ${JSON.stringify(query).slice(0, 200)}`);
   } catch (err) {
     say('d1', String(err.message ?? err));
-  }
-
-  // three probes with the same code: no database, the old database, the new one
-  try {
-    const source = readFileSync(`${workerDir}wrangler.jsonc`, 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '')
-      .replace(/,(?=\s*[}\]])/g, '');
-    const base = JSON.parse(source);
-    const dbs = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database?per_page=100`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).then((r) => r.json());
-    const byName = new Map((dbs.result ?? []).map((db) => [db.name, db.uuid ?? db.id]));
-    const cases = [
-      ['fresh-nodb', null],
-      ['fresh-new', byName.get('zeus-db')],
-      ['fresh-old', byName.get('amin-chat-db')],
-    ];
-    for (const [suffix, id] of cases) {
-      const name = `zeus-${suffix}-${Date.now().toString(36).slice(-4)}`;
-      const config = { ...base, name };
-      if (id) {
-        config.d1_databases = [{ binding: 'DB', database_name: suffix === 'fresh-old' ? 'amin-chat-db' : 'zeus-db', database_id: id, migrations_dir: 'migrations' }];
-      } else {
-        delete config.d1_databases;
-      }
-      writeFileSync(`${workerDir}wrangler.probe.jsonc`, JSON.stringify(config, null, 2));
-      const deployed = wrangler(['deploy', '--config', 'wrangler.probe.jsonc']);
-      await new Promise((resolve) => setTimeout(resolve, 6000));
-      const status = await statusOf(`https://${name}.amin-ck.workers.dev/?debug=1`);
-      say(suffix, `${status.status} title="${titleOf(status.body)}" exit ${deployed.code}`);
-    }
-  } catch (err) {
-    say('probes', String(err.message ?? err));
   }
 
   // the Worker's own words: wrangler tail while a request is made
