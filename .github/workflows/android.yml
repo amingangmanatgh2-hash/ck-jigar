@@ -50,7 +50,16 @@ jobs:
 
       - name: Build the release APK
         working-directory: android
-        run: gradle assembleRelease --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log
+
+      - name: Why the APK build failed
+        if: failure()
+        run: |
+          body=$(grep -E "^e: |error:|What went wrong|Execution failed|Caused by|FAILURE:" /tmp/gradle.log 2>/dev/null | head -14 | tr '\n' ' ' | tr -s ' ')
+          echo "::error title=Gradle::${body:-the build log was not written (the failure came before Gradle)}"
+          tail -c 1200 /tmp/gradle.log 2>/dev/null || true
 
       - name: Collect it
         run: |

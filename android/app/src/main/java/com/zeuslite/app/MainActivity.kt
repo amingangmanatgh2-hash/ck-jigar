@@ -45,7 +45,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Update
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -526,7 +526,7 @@ private fun StatusCard(t: Words, now: Long, onToggle: () -> Unit, onSubscribe: (
 
             Spacer(Modifier.height(16.dp))
             TextButton(onClick = onSubscribe) {
-                Icon(Icons.Filled.SystemUpdate, contentDescription = null, tint = Accent, modifier = Modifier.size(17.dp))
+                Icon(Icons.Filled.Update, contentDescription = null, tint = Accent, modifier = Modifier.size(17.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(t.subscription, color = Accent, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
             }
@@ -749,3 +749,4 @@ private fun share(context: Context, text: String) {
         context.startActivity(Intent.createChooser(intent, "Zeus Lite").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
+
