@@ -34,3 +34,7 @@ apps/api/.wrangler.dev-offline.jsonc
 
 # Written by scripts/deploy.mjs for a deployment without R2 (docs/deploy.md)
 apps/api/wrangler.no-r2.generated.jsonc
+
+# written by scripts/deploy.mjs
+worker/.deployed-url
+worker/wrangler.generated.jsonc

@@ -1,7 +1,0 @@
-# Caddy in front of the relay: automatic HTTPS, WebSocket upgrades work without extra settings.
-# flush_interval -1 = never hold back streamed data (AI answers arrive word by word).
-{$RELAY_DOMAIN} {
-	reverse_proxy relay:8080 {
-		flush_interval -1
-	}
-}

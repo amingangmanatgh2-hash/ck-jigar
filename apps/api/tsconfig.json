@@ -1,9 +1,0 @@
-{
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"],
-    "lib": ["ES2023"]
-  },
-  "include": ["src", "test", "dev", "worker-configuration.d.ts"],
-  "exclude": ["test/fake-ai/**/*.mjs"]
-}

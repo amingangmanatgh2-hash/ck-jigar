@@ -1,52 +1,17 @@
-# Manual ("Run workflow"): publishes AMIN CHAT to YOUR Cloudflare account — web app, Worker, database and file bucket — and shows the
-# address of the live service at the top of the run page.
+# Publishes the panel to the Cloudflare account behind the DEPLOY_ENV repository secret, then checks the live
+# service: the page loads, the API refuses strangers, the right password is accepted, and the overview answers.
 #
-# One-time setup. The easiest way is ONE repository secret (Settings > Secrets and variables > Actions > New repository secret) named
-# DEPLOY_ENV whose value is these lines, one per line, no quotes (CF_ACCOUNT_ID / CF_API_TOKEN are accepted as shorter spellings):
-#     CLOUDFLARE_ACCOUNT_ID=...   CLOUDFLARE_API_TOKEN=...   GROQ_API_KEY=...   (the last one is optional)
-# Or three separate repository secrets with those names; a separate secret wins over the same line in DEPLOY_ENV. What each one is:
-#   CLOUDFLARE_ACCOUNT_ID   your account id (dashboard > Workers & Pages > Account Details > copy button)
-#   CLOUDFLARE_API_TOKEN    My Profile > API Tokens > Create Token > template "Edit Cloudflare Workers" (it has Workers Scripts,
-#                           Workers R2 Storage and Account Settings but NOT D1), then add one more row: Account > D1 > Edit
-#   GROQ_API_KEY            optional: console.groq.com > API Keys > Create. A second AI service, next to Workers AI: it answers quick
-#                           requests first and takes over when Workers AI is busy or its free allowance is spent. Without it the
-#                           service runs on Workers AI alone.
-# The names must match exactly. Before anything is published a preflight asks Cloudflare and Groq whether everything is in place
-# (token, Workers, D1, R2, Groq) and lists ALL problems at once, with the fix for each; it prints no secret.
-# Two things need no action from you any more: a new account has no workers.dev address, so the step "Prepare the account" registers a free
-# one right before publishing (it says which name; to choose it yourself, open Workers & Pages in the dashboard once, before the run). And
-# R2: it needs a payment method that not everybody can add, so when the account has not switched R2 on the service goes live WITHOUT file
-# storage (sending files and photos is off, everything else works) and the run says so; switch R2 on later (Storage & databases > R2 >
-# Overview > subscribe; free monthly allowance) and run again to add it. The free Workers plan is enough to try it, with two limits (10 ms
-# of CPU per request, 100 000 requests a day) explained in docs/deploy.md; Workers Paid is the safer plan.
-# Before the first run, put your own username in "ADMIN_USERNAMES" in apps/api/wrangler.jsonc, and register it as soon as the
-# service is up (docs/deploy.md).
-#
-# Two ways to start it:
-#   - Actions > Deploy to Cloudflare > Run workflow. GitHub shows that button only once this file is on the default branch (Main).
-#   - Without any button and without merging anything: a commit that changes the file deploy/REQUEST, on Main or on an arena/* branch.
-#     Line 1 of that file is "check" (the plan and the tests only; nothing is published, no secret is used) or "deploy".
-#
-# The first run creates the D1 database and the R2 bucket. Wrangler looks them up by name, so a re-run or an already existing one is
-# never duplicated. Every later run applies the migrations first and deploys the new code after. Worker secrets (RELAY_SECRET,
-# GOOGLE_*, SEARCH_*) live on Cloudflare, are set once and are not touched here. The exception is GROQ_API_KEY: when the repository
-# secret exists it is stored as the Worker secret of the same name after each deployment (so rotating the key is: change the repository
-# secret, run again); when it does not exist, whatever is stored on Cloudflare stays as it is.
-name: Deploy to Cloudflare
+# Start it either from Actions → "Deploy panel" → Run workflow, or by changing deploy/REQUEST (line 1: "deploy").
+name: Deploy panel
 
 on:
   workflow_dispatch:
-    inputs:
-      smoke_url:
-        description: 'Only if you use your own domain: its address, e.g. https://chat.example.com. The workers.dev address is checked automatically.'
-        required: false
-        default: ''
   push:
     branches: [Main, 'arena/**']
     paths: ['deploy/REQUEST']
 
 concurrency:
-  group: deploy
+  group: deploy-panel
   cancel-in-progress: false
 
 permissions:
@@ -55,239 +20,62 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     environment: production
+    env:
+      DEPLOY_ENV: ${{ secrets.DEPLOY_ENV }}
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
     steps:
-      - uses: actions/checkout@v7
-      - name: What was asked for
-        id: ask
-        run: |
-          MODE=deploy
-          if [ "$GITHUB_EVENT_NAME" = "push" ]; then MODE=$(head -n 1 deploy/REQUEST | tr -d '[:space:]'); fi
-          case "$MODE" in
-            deploy|check) ;;
-            *) echo "::error title=deploy/REQUEST::line 1 must be check or deploy (it is: $MODE)"; exit 1 ;;
-          esac
-          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
-          echo "Mode: **$MODE**" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Show the plan (also stops here when ADMIN_USERNAMES names somebody who can never register)
-        run: |
-          set -o pipefail
-          npm run deploy -- --dry-run 2>&1 | tee plan.log
-      - name: Read the optional single secret DEPLOY_ENV (one paste instead of three secrets)
-        id: bundle
-        if: steps.ask.outputs.mode == 'deploy'
-        env:
-          DEPLOY_ENV: ${{ secrets.DEPLOY_ENV }}
-        run: node scripts/load-deploy-env.mjs
-      - name: Preflight (is everything in place? all problems at once, no secret printed)
-        id: preflight
-        if: steps.ask.outputs.mode == 'deploy'
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || steps.bundle.outputs.account }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN || steps.bundle.outputs.token }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY || steps.bundle.outputs.groq }}
-        run: |
-          set -o pipefail
-          npm run preflight 2>&1 | tee preflight.log
-      - name: Tests first (nothing is published when one fails)
-        id: tests
-        run: |
-          set -o pipefail
-          npm test 2>&1 | tee test.log
-      - name: Prepare the account (a workers.dev address, when the account has none)
-        id: account
-        if: steps.ask.outputs.mode == 'deploy'
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || steps.bundle.outputs.account }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN || steps.bundle.outputs.token }}
-        run: |
-          set -o pipefail
-          npm run prepare:account 2>&1 | tee account.log
-      - name: Deploy (build, then migrate and publish in the safe order)
+      - run: npm test
+      - name: Deploy
         id: deploy
-        if: steps.ask.outputs.mode == 'deploy'
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || steps.bundle.outputs.account }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN || steps.bundle.outputs.token }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY || steps.bundle.outputs.groq }}
-          AMIN_R2: ${{ steps.preflight.outputs.r2 }}
+        run: node scripts/deploy.mjs
+      - name: The deployment is registered
+        id: where
         run: |
-          set -o pipefail
-          npm run deploy 2>&1 | tee deploy.log
-      - name: Address of the live service
-        id: address
-        if: success() && steps.ask.outputs.mode == 'deploy'
-        env:
-          AMIN_R2: ${{ steps.preflight.outputs.r2 }}
-        run: |
-          URL=$(sed -E 's/\x1b\[[0-9;]*m//g' deploy.log | grep -oE 'https://[A-Za-z0-9.-]+\.workers\.dev' | head -1 || true)
+          URL=$(cat worker/.deployed-url | tr -d '[:space:]')
+          if [ -z "$URL" ]; then echo "::error title=Address::the deployment did not report an address"; exit 1; fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "### Panel: $URL" >> "$GITHUB_STEP_SUMMARY"
+      - name: Check the live service
+        env:
+          URL: ${{ steps.where.outputs.url }}
+        run: |
+          set -euo pipefail
+          echo "checking $URL"
+          page=$(curl -fsS "$URL/")
+          echo "$page" | grep -q 'ZEUS LITE' || { echo "::error title=Page::the panel page did not load"; exit 1; }
+
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/me")
+          [ "$code" = "401" ] || { echo "::error title=Auth::/api/me answered $code instead of 401"; exit 1; }
+
+          jar=$(mktemp)
+          if [ -n "${ADMIN_PASSWORD:-}" ]; then PASS="$ADMIN_PASSWORD"; else PASS="amin_ck"; fi
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -c "$jar" -X POST "$URL/api/auth" \
+            -H 'Content-Type: application/json' -d "{\"password\":\"$PASS\"}")
+          [ "$code" = "200" ] || { echo "::error title=Sign in::/api/auth answered $code — is the password right?"; exit 1; }
+
+          code=$(curl -sS -o /tmp/me.json -w '%{http_code}' -b "$jar" "$URL/api/me")
+          [ "$code" = "200" ] || { echo "::error title=Session::/api/me answered $code with a fresh session"; exit 1; }
+
+          overview=$(curl -fsS -b "$jar" "$URL/api/overview")
+          echo "$overview"
+          echo "$overview" | grep -q '"users"' || { echo "::error title=Overview::no user count in the answer"; exit 1; }
+
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/sub/aaaaaaaaaaaaaaaaaaaaaaaa")
+          [ "$code" = "404" ] || { echo "::error title=Subscription::an unknown token answered $code instead of 404"; exit 1; }
+          echo "::notice title=Live::panel, sign in, session and subscription all answer as expected"
+      - name: What to write down
+        run: |
           {
-            if [ -n "$URL" ]; then
-              echo "## AMIN CHAT is live: $URL"
-              echo
-              echo "Open it, register the username you put in ADMIN_USERNAMES (that account becomes the administrator), then open Models & usage (in Persian: مدل‌ها و مصرف) and press Check availability (بررسی دسترس‌پذیری); until a model passes that check it is never shown as ready."
-            else
-              echo "## Deployed"
-              echo
-              echo "Wrangler printed no workers.dev address (is workers_dev turned off or a custom domain used?). Check the log of the previous step."
-            fi
+            echo ""
+            echo "**Panel:** ${{ steps.where.outputs.url }}"
+            echo ""
+            echo "Open it, sign in (the password is the \`ADMIN_PASSWORD\` secret, or \`amin_ck\` when no secret is set) and change it from the 🔑 button."
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$URL" ]; then echo "::notice title=AMIN CHAT is live::$URL"; fi
-          if [ "$AMIN_R2" = "off" ]; then
-            { echo; echo "**File storage is OFF:** R2 is not switched on for this account, so sending files and photos is not available (everything else works). To add it: Cloudflare dashboard > Storage & databases > R2 > Overview > subscribe (it asks for a payment method; the monthly free allowance is enough), then run the deployment again."; } >> "$GITHUB_STEP_SUMMARY"
-            echo "::warning title=File storage is off::R2 is not switched on for this account, so the service is live without file storage. Switch R2 on and run the deployment again to add it."
-          fi
-          GROQ_LINES=$(sed -E 's/\x1b\[[0-9;]*m//g' deploy.log | grep -E '^\[deploy\] (WARNING: )?Groq' | cut -c1-400 || true)
-          if [ -n "$GROQ_LINES" ]; then { echo; echo '```'; echo "$GROQ_LINES"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
-      - name: Check that it answers like AMIN CHAT
-        id: smoke
-        if: success() && steps.ask.outputs.mode == 'deploy' && (inputs.smoke_url != '' || steps.address.outputs.url != '')
-        env:
-          TARGET: ${{ inputs.smoke_url || steps.address.outputs.url }}
-          GROQ_PROVIDED: ${{ secrets.GROQ_API_KEY != '' || steps.bundle.outputs.groq != '' }}
-          AMIN_R2: ${{ steps.preflight.outputs.r2 }}
-        run: |
-          # A brand-new workers.dev address can take a few minutes to become reachable from here (the name has to spread and get a
-          # certificate), so this waits up to about 5 minutes and remembers WHY each attempt failed: the annotations are all that can be
-          # read without opening the log.
-          LAST="no attempt yet"
-          for i in $(seq 1 30); do
-            CODE=$(curl -sS -o health.json -w '%{http_code}' --max-time 10 "${TARGET%/}/api/health" 2>curl.err || true)
-            if [ "$CODE" = "200" ] && grep -q '"service":"amin-chat"' health.json; then
-              echo; echo "OK: ${TARGET%/}/api/health"
-              # which AI services does the live service have credentials for? (yes/no only; whether a model really answers is what
-              # "Models & usage > Check availability" finds out after signing in)
-              if [ "$GROQ_PROVIDED" = "true" ]; then
-                for j in 1 2 3; do [ "$(jq -r '.ai.groq' health.json 2>/dev/null)" = "true" ] && break; sleep 5; curl -fsS "${TARGET%/}/api/health" > health.json || true; done
-              fi
-              WAI=$(jq -r '.ai["workers-ai"]' health.json 2>/dev/null || echo unknown)
-              GROQ=$(jq -r '.ai.groq' health.json 2>/dev/null || echo unknown)
-              FILES=$(jq -r '.storage.files' health.json 2>/dev/null || echo unknown)
-              echo "AI services with credentials on the live service: Workers AI=$WAI, Groq=$GROQ; file storage (R2)=$FILES"
-              {
-                echo
-                echo "| Service | connected |"
-                echo "|---|---|"
-                echo "| Cloudflare Workers AI | $WAI |"
-                echo "| Groq | $GROQ |"
-                echo "| File storage (R2) | $FILES |"
-                echo
-                echo "\"connected\" means the service has credentials or a bucket. Whether each model really answers is found out by the real test requests of **Models & usage → Check availability** (administrator)."
-              } >> "$GITHUB_STEP_SUMMARY"
-              [ "$WAI" = "true" ] || echo "::warning title=Workers AI::the live service has no Workers AI binding, so the main AI service is missing"
-              if [ "$GROQ_PROVIDED" = "true" ] && [ "$GROQ" != "true" ]; then echo "::warning title=Groq::GROQ_API_KEY exists as a repository secret, but the live service does not show Groq as connected (see the Groq line of the deploy step)"; fi
-              # what the preflight decided about the bucket must be what is live
-              if [ "$AMIN_R2" = "off" ] && [ "$FILES" = "true" ]; then echo "::warning title=File storage::R2 was left out of this deployment, but the live service reports a file bucket"; fi
-              if [ "$AMIN_R2" != "off" ] && [ "$FILES" = "false" ]; then echo "::warning title=File storage::the live service reports no file bucket although R2 was expected to be in this deployment"; fi
-              # Does signing in work under the CPU limit of this plan? Hashing a password is the heaviest thing a request does here (the Free
-              # plan allows 10 ms of CPU), and an unknown user costs exactly the same hashing as a real one, so a sign-in with a user that does
-              # not exist must be answered 401 INVALID_CREDENTIALS. Nothing is created or changed. A 5xx or an error page (Cloudflare error
-              # 1102 = CPU limit exceeded) means nobody could register or sign in.
-              LOGIN=$(curl -sS -o login.json -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' --data '{"username":"smoke_probe_nobody","password":"smoke-probe-not-a-password"}' "${TARGET%/}/api/auth/login" 2>login.err || true)
-              if [ "$LOGIN" = "401" ] && grep -q 'INVALID_CREDENTIALS' login.json; then
-                echo "OK: the sign-in path (password hashing) runs within this plan's CPU limit: an unknown user got HTTP 401"
-                { echo; echo "Sign-in under this plan's CPU limit: **works** (a user that does not exist got HTTP 401, after the same password hashing a real sign-in does)."; } >> "$GITHUB_STEP_SUMMARY"
-              elif [ "$LOGIN" = "429" ]; then
-                echo "::warning title=Sign-in check::the sign-in check was rate-limited (HTTP 429), so it proved nothing; run the deployment again, or try to register"
-              else
-                BODY=$(head -c 200 login.json 2>/dev/null | tr '\n' ' ')
-                echo "::error title=Sign-in does not work::an unknown user got HTTP $LOGIN instead of 401 ($BODY $(head -c 120 login.err | tr '\n' ' ')). On the Free plan this is usually Cloudflare error 1102 (more than 10 ms of CPU for hashing the password): lower PASSWORD_HASH_ITERATIONS in apps/api/wrangler.jsonc (now 20000, never below 10000) and run again, or move to Workers Paid."
-                { echo; echo "Sign-in under this plan's CPU limit: **FAILED** (HTTP $LOGIN). See the error annotation."; } >> "$GITHUB_STEP_SUMMARY"
-                exit 1
-              fi
-              exit 0
-            fi
-            LAST="HTTP $CODE $(head -c 160 curl.err | tr '\n' ' ')"
-            echo "not ready yet (attempt $i of 30): $LAST"; sleep 8
-          done
-          echo "::error title=The service did not answer::${TARGET%/}/api/health did not answer like AMIN CHAT in about 5 minutes (last: $LAST). The Worker IS published: open the address in a browser. A brand-new workers.dev address can take a few minutes; if it still fails, run the deployment again."
-          exit 1
-      - name: Check passed
-        if: success() && steps.ask.outputs.mode == 'check'
-        run: |
-          echo "## Check passed: the plan is valid and every test is green. Nothing was published." >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=Check passed::the plan is valid and every test is green; nothing was published"
-      - name: Which secrets does this run see? (a yes or no per name; never a value)
-        if: failure() && steps.preflight.outcome == 'failure'
-        env:
-          REPO: ${{ github.repository }}
-          S_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
-          S_CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID != '' }}
-          S_ACCOUNT_ID: ${{ secrets.ACCOUNT_ID != '' }}
-          S_CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
-          S_CF_API_TOKEN: ${{ secrets.CF_API_TOKEN != '' }}
-          S_CLOUDFLARE_TOKEN: ${{ secrets.CLOUDFLARE_TOKEN != '' }}
-          S_CF_TOKEN: ${{ secrets.CF_TOKEN != '' }}
-          S_CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY != '' }}
-          S_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY != '' }}
-          S_GROQ_KEY: ${{ secrets.GROQ_KEY != '' }}
-          S_DEPLOY_ENV: ${{ secrets.DEPLOY_ENV != '' }}
-          B_ACCOUNT: ${{ steps.bundle.outputs.account != '' }}
-          B_TOKEN: ${{ steps.bundle.outputs.token != '' }}
-          B_GROQ: ${{ steps.bundle.outputs.groq != '' }}
-        run: |
-          # Only the names this project could plausibly be given are asked about, one by one: "does a secret with this name exist?".
-          LINK="https://github.com/$REPO/settings/secrets/actions"
-          FOUND=""
-          for n in CLOUDFLARE_ACCOUNT_ID CF_ACCOUNT_ID ACCOUNT_ID CLOUDFLARE_API_TOKEN CF_API_TOKEN CLOUDFLARE_TOKEN CF_TOKEN CLOUDFLARE_API_KEY GROQ_API_KEY GROQ_KEY DEPLOY_ENV; do
-            if [ "$(printenv "S_$n")" = "true" ]; then FOUND="$FOUND $n"; fi
-          done
-          FOUND="${FOUND# }"
-          has() { case " $FOUND " in *" $1 "*) return 0 ;; esac; return 1; }
-          ACCOUNT=NOT_FOUND; if has CLOUDFLARE_ACCOUNT_ID || has CF_ACCOUNT_ID; then ACCOUNT=found; elif [ "$B_ACCOUNT" = true ]; then ACCOUNT="found (a line of DEPLOY_ENV)"; fi
-          TOKEN=NOT_FOUND; if has CLOUDFLARE_API_TOKEN || has CF_API_TOKEN; then TOKEN=found; elif [ "$B_TOKEN" = true ]; then TOKEN="found (a line of DEPLOY_ENV)"; fi
-          GROQ=NOT_FOUND; if has GROQ_API_KEY; then GROQ=found; elif [ "$B_GROQ" = true ]; then GROQ="found (a line of DEPLOY_ENV)"; fi
-          SEE="${FOUND// /, }"; [ -n "$SEE" ] || SEE="none of the expected names"
-          EASIEST="Easiest: ONE secret named DEPLOY_ENV (open $LINK/new), whose value is the same lines you would write in a chat: CF_ACCOUNT_ID=...  CF_API_TOKEN=...  GROQ_API_KEY=... (one per line)."
-          if [ "$ACCOUNT" != NOT_FOUND ] && [ "$TOKEN" != NOT_FOUND ]; then
-            HINT="Both Cloudflare values reach the workflow, so the preflight message above is about their content, not their names."
-          elif has DEPLOY_ENV; then
-            HINT="A secret named DEPLOY_ENV exists, but it holds no usable line for everything this run needs: see the warnings of the step that reads it (they name the missing lines, never the values). Needed lines: CLOUDFLARE_ACCOUNT_ID (or CF_ACCOUNT_ID) and CLOUDFLARE_API_TOKEN (or CF_API_TOKEN), one per line, NAME=value."
-          elif [ -z "$FOUND" ]; then
-            HINT="No secret with a name this project uses reaches the workflow, so it was never saved, or saved somewhere else. It must be a REPOSITORY secret of $REPO (open $LINK, tab Actions, button New repository secret); Variables, Codespaces secrets and Dependabot secrets are not seen by this workflow. $EASIEST"
-          else
-            HINT="Some secrets exist, but not the two this run needs (CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN, or CF_ACCOUNT_ID and CF_API_TOKEN). GitHub cannot rename a secret: create it again under the right name at $LINK. $EASIEST"
-          fi
-          if has CLOUDFLARE_API_KEY && [ "$TOKEN" != found ]; then
-            HINT="$HINT CLOUDFLARE_API_KEY is the old Global API Key, which this deployment does not use: create an API TOKEN (My Profile > API Tokens > Create Token)."
-          fi
-          echo "Secrets found under the names this project knows: $SEE"
-          echo "CLOUDFLARE_ACCOUNT_ID or CF_ACCOUNT_ID: $ACCOUNT"
-          echo "CLOUDFLARE_API_TOKEN or CF_API_TOKEN:   $TOKEN"
-          echo "GROQ_API_KEY (optional):                $GROQ"
-          echo "::warning title=Which secrets this run sees::Found: $SEE. Account id: $ACCOUNT. Token: $TOKEN. Groq key: $GROQ. $HINT"
-          {
-            echo "### Which secrets this run sees (names only; values are never read out)"
-            echo
-            echo "| Needed | State |"
-            echo "|---|---|"
-            echo "| CLOUDFLARE_ACCOUNT_ID (or CF_ACCOUNT_ID) | $ACCOUNT |"
-            echo "| CLOUDFLARE_API_TOKEN (or CF_API_TOKEN) | $TOKEN |"
-            echo "| GROQ_API_KEY (optional) | $GROQ |"
-            echo
-            echo "Found under a name this project knows: $SEE"
-            echo
-            echo "$HINT"
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: What went wrong (the lines that matter, as annotations)
-        if: failure()
-        env:
-          TESTS_OUTCOME: ${{ steps.tests.outcome }}
-          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
-        run: |
-          say() { # $1 = title, rest = text: one annotation, one line, percent signs escaped
-            local t="$1"; shift; local x="$*"; x="${x//'%'/'%25'}"; echo "::error title=$t::${x:-no details; open the log of the red step}"
-          }
-          clean() { sed -E 's/\x1b\[[0-9;]*m//g' "$1" 2>/dev/null; }
-          if [ "$DEPLOY_OUTCOME" = "failure" ] && [ -s deploy.log ]; then say "Deploy failed" "$(clean deploy.log | grep -E '✘|ERROR|Error|error|failed|nobody can register|Could not ask|WARNING' | head -n 8 | cut -c1-300 | tr '\n' '|')"; fi
-          if [ -s preflight.log ] && ! [ -s test.log ]; then say "Nothing was published" "The preflight found problems: each one is its own annotation above, with the fix. Fix them (or the secrets), then run again."; fi
-          if [ "$TESTS_OUTCOME" = "failure" ] && [ -s test.log ] && ! [ -s deploy.log ]; then say "Tests failed" "$(clean test.log | grep -E 'FAIL |not ok |AssertionError|Tests +[0-9]+ failed' | head -n 8 | cut -c1-300 | tr '\n' '|')"; fi
-          if [ -s account.log ] && ! [ -s deploy.log ] && [ "$TESTS_OUTCOME" != "failure" ]; then say "Nothing was published" "$(clean account.log | grep -E '^\[address\]' | tail -n 3 | cut -c1-400 | tr '\n' '|')"; fi
-          if [ -s plan.log ] && ! [ -s test.log ] && ! [ -s preflight.log ]; then say "The plan was refused" "$(clean plan.log | grep -E 'ADMIN_USERNAMES|nobody can register|Nothing was' | head -n 4 | cut -c1-400 | tr '\n' '|')"; fi

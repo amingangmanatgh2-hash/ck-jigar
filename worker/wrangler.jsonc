@@ -1,0 +1,18 @@
+{
+  // The Worker name becomes the workers.dev subdomain: https://<name>.<account>.workers.dev
+  "name": "zeus-lite",
+  "main": "src/index.js",
+  "compatibility_date": "2025-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zeus-db",
+      // scripts/deploy.mjs (run by .github/workflows/deploy.yml) creates the database if it does not exist and
+      // writes its real id here; `wrangler dev` works with the placeholder.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

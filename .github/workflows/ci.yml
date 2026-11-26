@@ -1,37 +1,32 @@
-# Every push and pull request: install from the lockfile on a clean machine, type-check, run ALL tests, build the web app.
 name: CI
 
 on:
   push:
+    branches: [Main, 'arena/**']
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-
 jobs:
-  test:
+  panel:
+    name: Panel (tests + bundle)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: '22'
           cache: npm
-      - name: Install (exactly what package-lock.json says)
-        run: npm ci
-      # Only what ships to users (production dependencies) can fail the build. The development tools have one open advisory without a fix
-      # (picomatch, see docs/SECURITY.md); gating on it would make every build red for something nobody can fix yet.
-      - name: Known vulnerabilities in production dependencies (high or worse)
-        run: npm audit --omit=dev --audit-level=high
-      - name: Type-check (shared, api, web)
-        run: npm run typecheck
-      - name: Tests (scripts + relay, API on workerd, web)
+      - run: npm ci
+      - name: Tests
         run: npm test
-      - name: Build the web app
-        run: npm run build
+      - name: The Worker bundles for Cloudflare
+        run: npx wrangler deploy --dry-run --outdir /tmp/zeus-dist --config wrangler.jsonc
+        working-directory: worker

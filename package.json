@@ -1,33 +1,20 @@
 {
-  "name": "amin-chat",
+  "name": "zeus-lite",
+  "version": "1.0.0",
   "private": true,
-  "version": "0.1.0",
-  "description": "AMIN CHAT — messenger with a real, permission-aware AI assistant (AMIN AI) on Cloudflare Workers AI",
+  "description": "VLESS config panel on Cloudflare Workers + D1, with an Android client and a Windows client",
   "type": "module",
-  "workspaces": [
-    "packages/*",
-    "apps/*"
-  ],
-  "engines": {
-    "node": ">=22.12.0"
-  },
   "scripts": {
-    "typecheck": "npm run typecheck -w @aminchat/shared -w @aminchat/api -w @aminchat/web",
-    "test": "npm run test:scripts && npm run test -w @aminchat/api -w @aminchat/web",
-    "test:api": "npm run test -w @aminchat/api",
-    "test:web": "npm run test -w @aminchat/web",
-    "build": "npm run build -w @aminchat/web",
-    "dev:api": "node scripts/dev-api.mjs",
-    "dev:web": "npm run dev -w @aminchat/web",
-    "deploy": "node scripts/deploy.mjs",
-    "preflight": "node scripts/preflight.mjs",
-    "prepare:account": "node scripts/prepare-account.mjs",
-    "db:migrate:local": "npm run db:migrate:local -w @aminchat/api",
-    "db:migrate:remote": "npm run db:migrate:remote -w @aminchat/api",
-    "verify:ai": "node scripts/verify-workers-ai.mjs",
-    "dev:api:offline": "node scripts/dev-api.mjs --offline",
-    "test:scripts": "node --test scripts/*.test.mjs relay/*.test.mjs",
-    "drive:token": "node scripts/drive-token.mjs",
-    "relay": "node relay/relay.mjs"
+    "test": "node --test worker/test/*.test.mjs",
+    "dev": "cd worker && wrangler dev",
+    "deploy": "cd worker && wrangler deploy",
+    "db:migrate": "cd worker && wrangler d1 migrations apply zeus-db --remote",
+    "db:create": "cd worker && wrangler d1 create zeus-db"
+  },
+  "devDependencies": {
+    "wrangler": "^4.162.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
