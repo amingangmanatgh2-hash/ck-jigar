@@ -79,19 +79,29 @@ jobs:
           code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/sub/aaaaaaaaaaaaaaaaaaaaaaaa")
           [ "$code" = "404" ] || { echo "::error title=Subscription::an unknown token answered $code instead of 404"; exit 1; }
           echo "::notice title=Live::panel, sign in, session and subscription all answer as expected"
-      - name: Can this account serve a Worker at all?
+      - name: Is it the code or the deployment?
         if: failure()
         env:
           DEPLOY_ENV: ${{ secrets.DEPLOY_ENV }}
         run: |
           set -uo pipefail
-          TOKEN=$(printf '%s\n' "$DEPLOY_ENV" | sed -nE 's/^(CLOUDFLARE_ACCOUNT_ID|CF_ACCOUNT_ID)=//p' | head -1)
+          TOKEN=$(printf '%s\n' "$DEPLOY_ENV" | sed -nE 's/^(CLOUDFLARE_API_TOKEN|CF_API_TOKEN)=//p' | head -1 | tr -d '\r"\'')
+          ACCOUNT=$(printf '%s\n' "$DEPLOY_ENV" | sed -nE 's/^(CLOUDFLARE_ACCOUNT_ID|CF_ACCOUNT_ID)=//p' | head -1 | tr -d '\r"\'')
+          export CLOUDFLARE_API_TOKEN="$TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT"
+
+          # 1. a ten line Worker: does the account serve anything?
           mkdir -p /tmp/hello
           printf 'export default { fetch() { return new Response("hello from zeus"); } };\n' > /tmp/hello/index.js
           printf '{"name":"zeus-hello","main":"index.js","compatibility_date":"2025-09-01"}\n' > /tmp/hello/wrangler.jsonc
-          (cd worker && npx wrangler deploy --config /tmp/hello/wrangler.jsonc 2>&1 | tail -6) || true
-          code=$(curl -sS -o /tmp/hello.txt -w '%{http_code}' https://zeus-hello.amin-ck.workers.dev/)
-          echo "::error title=Ten line Worker::status $code body $(head -c 80 /tmp/hello.txt | tr '\n\r' ' ')"
+          (cd /tmp/hello && npx --yes wrangler@4.168.0 deploy --config wrangler.jsonc > /tmp/hello.log 2>&1) || true
+          hello=$(curl -sS -o /tmp/hello.txt -w '%{http_code}' https://zeus-hello.amin-ck.workers.dev/)
+
+          # 2. the same panel under a second name: is this deployment broken or is the code?
+          (cd worker && npx wrangler deploy --config wrangler.generated.jsonc --name zeus-probe > /tmp/probe.log 2>&1) || true
+          probe=$(curl -sS -o /tmp/probe.txt -w '%{http_code}' "https://zeus-probe.amin-ck.workers.dev/?debug=1")
+
+          meta=$(curl -sS -H "Authorization: Bearer $TOKEN" "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/workers/scripts/zeus-lite" | head -c 360 | tr '\n\r' ' ')
+          echo "::error title=Probe::hello=$hello probe=$probe probeBody=$(head -c 200 /tmp/probe.txt | tr '\n\r' ' ') | deployTail=$(tail -c 200 /tmp/probe.log | tr '\n\r' ' ') | meta=$meta"
 
       - name: Why the Worker is unhappy (tail)
         if: failure()
