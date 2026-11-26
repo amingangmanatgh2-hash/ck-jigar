@@ -50,11 +50,11 @@ jobs:
           set -euo pipefail
           echo "checking $URL"
           sleep 4
-          code=$(curl -sS -o /tmp/page.html -w '%{http_code}' "$URL/")
+          code=$(curl -sS -o /tmp/page.html -w '%{http_code}' "$URL/?debug=1")
           echo "GET / → $code"
           if [ "$code" != "200" ]; then
             echo "--- body ---"; head -c 2000 /tmp/page.html; echo
-            snippet=$(head -c 260 /tmp/page.html | tr '\n\r' '  ')
+            snippet=$(head -c 700 /tmp/page.html | tr '\n\r' '  ')
             echo "::error title=Page answered $code::$snippet"
             exit 1
           fi

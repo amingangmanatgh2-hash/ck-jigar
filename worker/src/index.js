@@ -286,6 +286,19 @@ function readCookie(request, name) {
 
 export default {
   async fetch(request, env) {
+    // A panel that answers "500" and nothing else is useless: the message (and, with ?debug=1, the stack) comes back
+    // in the body, so a failing deployment can be fixed instead of guessed at.
+    try {
+      return await route(request, env);
+    } catch (err) {
+      const detail = new URL(request.url).searchParams.has('debug') ? String(err?.stack ?? err) : String(err?.message ?? err);
+      return text(`internal error: ${detail.slice(0, 1200)}`, { status: 500 });
+    }
+  },
+};
+
+async function route(request, env) {
+  {
     const url = new URL(request.url);
     const path = url.pathname;
     const clientHost = url.hostname;
@@ -356,8 +369,8 @@ export default {
     }
 
     return new Response('Not found', { status: 404 });
-  },
-};
+  }
+}
 
 async function adminApi(request, env, url, clientHost) {
   const path = url.pathname;
