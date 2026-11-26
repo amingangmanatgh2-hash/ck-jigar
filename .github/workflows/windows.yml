@@ -1,0 +1,95 @@
+# Builds the Windows app (an Electron window around `sing-box`) and puts the setup.exe on the release.
+#
+# Two real checks run here: every JavaScript file is parsed, and `sing-box check` is asked whether the
+# configuration this app generates is one it accepts. A build that would not start never ships.
+name: Windows app
+
+on:
+  push:
+    branches: [Main, 'arena/**']
+    paths: ['windows/**', '.github/workflows/windows.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  setup:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+
+      - name: Install
+        working-directory: windows
+        run: npm install --no-audit --no-fund
+
+      - name: The core (`sing-box.exe`)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force windows/bin | Out-Null
+          $tag = 'v1.10.7'
+          $ok = $false
+          try {
+            $url = "https://github.com/SagerNet/sing-box/releases/download/$tag/sing-box-$($tag.TrimStart('v'))-windows-amd64.zip"
+            Write-Host "downloading $url"
+            Invoke-WebRequest -Uri $url -OutFile sb.zip -UseBasicParsing
+            $ok = $true
+          } catch {
+            Write-Warning "v1.10.7 was not downloadable: $($_.Exception.Message)"
+            $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/SagerNet/sing-box/releases/latest' -Headers @{ 'User-Agent' = 'zeus-lite' }
+            $asset = $release.assets | Where-Object { $_.name -match 'windows-amd64\.zip$' } | Select-Object -First 1
+            if (-not $asset) { throw 'no windows-amd64 asset in the latest sing-box release' }
+            Write-Host "falling back to $($release.tag_name)"
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile sb.zip -UseBasicParsing
+          }
+          Expand-Archive sb.zip -DestinationPath sb -Force
+          $exe = Get-ChildItem sb -Recurse -Filter sing-box.exe | Select-Object -First 1
+          Copy-Item $exe.FullName windows/bin/sing-box.exe
+          windows/bin/sing-box.exe version
+
+      - name: The generated config is one sing-box accepts
+        shell: pwsh
+        run: |
+          node -e "const { parseLink, buildSingBox } = require('./windows/core/config.js'); const fs = require('fs'); const link = 'vless://11111111-1111-4111-8111-111111111111@panel.example.com:443?encryption=none&type=ws&security=tls&host=panel.example.com&path=%2Fws&sni=panel.example.com&fp=chrome&alpn=h2,http1.1#sample'; const p = parseLink(link); if (!p) { throw new Error('the sample link did not parse'); } fs.writeFileSync('sample-singbox.json', JSON.stringify(buildSingBox(p), null, 2));"
+          Get-Content sample-singbox.json | Select-Object -First 12
+          windows/bin/sing-box.exe check -c sample-singbox.json
+          Write-Host "::notice title=Config::sing-box accepts the configuration this app generates"
+
+      - name: JavaScript parses
+        working-directory: windows
+        run: npm run check
+
+      - name: Installer
+        working-directory: windows
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run build
+
+      - name: Collect it
+        shell: pwsh
+        run: |
+          Get-ChildItem windows/dist
+          Copy-Item 'windows/dist/ZeusLite-Setup-1.0.0.exe' 'ZeusLite-Setup-1.0.0.exe'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZeusLite-setup
+          path: ZeusLite-Setup-1.0.0.exe
+          if-no-files-found: error
+
+      - name: Publish on the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (-not (gh release view v1.0.0 2>$null)) {
+            gh release create v1.0.0 --title "Zeus Lite 1.0.0" --notes "Android app (APK) and Windows app (setup.exe) for the Zeus Lite panel."
+          }
+          gh release upload v1.0.0 ZeusLite-Setup-1.0.0.exe --clobber

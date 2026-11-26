@@ -54,7 +54,8 @@ jobs:
           echo "GET / → $code"
           if [ "$code" != "200" ]; then
             echo "--- body ---"; head -c 2000 /tmp/page.html; echo
-            echo "::error title=Page::the panel page answered $code"
+            snippet=$(head -c 260 /tmp/page.html | tr '\n\r' '  ')
+            echo "::error title=Page answered $code::$snippet"
             exit 1
           fi
           grep -q 'ZEUS LITE' /tmp/page.html || { echo "::error title=Page::the panel page did not load"; exit 1; }

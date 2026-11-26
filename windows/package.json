@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "check": "node --check main.js && node --check preload.js && node --check core/config.js && node --check core/store.js && node --check renderer/app.js",
-    "build": "electron-builder --win nsis --x64"
+    "build": "electron-builder --win nsis --x64 --publish never"
   },
   "devDependencies": {
     "electron": "^31.7.7",
