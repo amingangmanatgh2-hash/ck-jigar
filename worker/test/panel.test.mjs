@@ -7,7 +7,8 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { before, test } from 'node:test';
 
-import worker, { addTraffic, getSettings, saveSettings } from '../src/index.js';
+import worker from '../src/index.js';
+import { addTraffic, getSettings, saveSettings } from '../src/app.js';
 
 const MIGRATION = readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8');
 
