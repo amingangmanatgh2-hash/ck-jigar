@@ -96,6 +96,8 @@ async function main() {
   say('tail', tailText.replace(/\s+/g, ' ').slice(-600) || '(nothing)');
 
   console.log(`::error title=Diagnose::${notes.join(' || ')}`);
+  // wrangler tail leaves a child holding the pipes open; do not wait for it
+  process.exit(0);
 }
 
 main().catch((err) => {
