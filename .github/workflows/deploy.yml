@@ -79,6 +79,20 @@ jobs:
           code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/sub/aaaaaaaaaaaaaaaaaaaaaaaa")
           [ "$code" = "404" ] || { echo "::error title=Subscription::an unknown token answered $code instead of 404"; exit 1; }
           echo "::notice title=Live::panel, sign in, session and subscription all answer as expected"
+      - name: Can this account serve a Worker at all?
+        if: failure()
+        env:
+          DEPLOY_ENV: ${{ secrets.DEPLOY_ENV }}
+        run: |
+          set -uo pipefail
+          TOKEN=$(printf '%s\n' "$DEPLOY_ENV" | sed -nE 's/^(CLOUDFLARE_ACCOUNT_ID|CF_ACCOUNT_ID)=//p' | head -1)
+          mkdir -p /tmp/hello
+          printf 'export default { fetch() { return new Response("hello from zeus"); } };\n' > /tmp/hello/index.js
+          printf '{"name":"zeus-hello","main":"index.js","compatibility_date":"2025-09-01"}\n' > /tmp/hello/wrangler.jsonc
+          (cd worker && npx wrangler deploy --config /tmp/hello/wrangler.jsonc 2>&1 | tail -6) || true
+          code=$(curl -sS -o /tmp/hello.txt -w '%{http_code}' https://zeus-hello.amin-ck.workers.dev/)
+          echo "::error title=Ten line Worker::status $code body $(head -c 80 /tmp/hello.txt | tr '\n\r' ' ')"
+
       - name: Why the Worker is unhappy (tail)
         if: failure()
         env:
@@ -109,7 +123,8 @@ jobs:
           echo "--- tail ---"; head -c 1500 /tmp/tail.log
           flat=$(head -c 400 /tmp/tail.log | tr '\n\r' ' ' | tr -d '"')
           diag="bytes=$(wc -c < /tmp/script.js) marker=$(grep -c 'zeus:' /tmp/script.js || true) codes=$(for p in / /api/me /nope; do printf '%s:%s ' "$p" "$(curl -sS -o /dev/null -w '%{http_code}' "https://zeus-lite.amin-ck.workers.dev$p")"; done)"
-          echo "::error title=Diagnostics::$diag | settings: $(head -c 260 /tmp/settings.json | tr '\n\r' ' ') | tail: ${flat:-(none)}"
+          body=$(head -c 120 /tmp/script.js | tr '\n\r' ' ')
+          echo "::error title=Diagnostics::$diag | content: $body | settings: $(head -c 200 /tmp/settings.json | tr '\n\r' ' ') | tail: ${flat:-(none)}"
           echo "--- body ---"; head -c 400 /tmp/body.txt
 
       - name: What to write down
