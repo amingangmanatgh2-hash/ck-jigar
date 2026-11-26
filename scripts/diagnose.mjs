@@ -9,6 +9,7 @@
  *   3. does the same panel work under a different worker name (so: the code, or this deployment)?
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { credentials } from './env.mjs';
@@ -92,6 +93,19 @@ async function main() {
     say('d1', `${db?.num_tables ?? '?'} tables | ${JSON.stringify(query).slice(0, 200)}`);
   } catch (err) {
     say('d1', String(err.message ?? err));
+  }
+
+  // the same code and the same binding under a name that has never been deployed
+  try {
+    const generated = JSON.parse(readFileSync(`${workerDir}wrangler.generated.jsonc`, 'utf8'));
+    const freshName = `zeus-fresh-${Date.now().toString(36).slice(-4)}`;
+    writeFileSync(`${workerDir}wrangler.fresh.jsonc`, JSON.stringify({ ...generated, name: freshName }, null, 2));
+    const deployed = wrangler(['deploy', '--config', 'wrangler.fresh.jsonc']);
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    const fresh = await statusOf(`https://${freshName}.amin-ck.workers.dev/?debug=1`);
+    say('freshWorker', `${freshName} ${fresh.status} title="${titleOf(fresh.body)}" exit ${deployed.code} ${deployed.out.slice(-80)}`);
+  } catch (err) {
+    say('freshWorker', String(err.message ?? err));
   }
 
   // the Worker's own words: wrangler tail while a request is made
