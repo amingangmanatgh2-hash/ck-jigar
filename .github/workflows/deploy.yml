@@ -79,63 +79,11 @@ jobs:
           code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/sub/aaaaaaaaaaaaaaaaaaaaaaaa")
           [ "$code" = "404" ] || { echo "::error title=Subscription::an unknown token answered $code instead of 404"; exit 1; }
           echo "::notice title=Live::panel, sign in, session and subscription all answer as expected"
-      - name: Is it the code or the deployment?
+      - name: Why it failed (one readable line)
         if: failure()
         env:
           DEPLOY_ENV: ${{ secrets.DEPLOY_ENV }}
-        run: |
-          set -uo pipefail
-          TOKEN=$(printf '%s\n' "$DEPLOY_ENV" | sed -nE 's/^(CLOUDFLARE_API_TOKEN|CF_API_TOKEN)=//p' | head -1 | tr -d '\r"\'')
-          ACCOUNT=$(printf '%s\n' "$DEPLOY_ENV" | sed -nE 's/^(CLOUDFLARE_ACCOUNT_ID|CF_ACCOUNT_ID)=//p' | head -1 | tr -d '\r"\'')
-          export CLOUDFLARE_API_TOKEN="$TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT"
-
-          # 1. a ten line Worker: does the account serve anything?
-          mkdir -p /tmp/hello
-          printf 'export default { fetch() { return new Response("hello from zeus"); } };\n' > /tmp/hello/index.js
-          printf '{"name":"zeus-hello","main":"index.js","compatibility_date":"2025-09-01"}\n' > /tmp/hello/wrangler.jsonc
-          (cd /tmp/hello && npx --yes wrangler@4.168.0 deploy --config wrangler.jsonc > /tmp/hello.log 2>&1) || true
-          hello=$(curl -sS -o /tmp/hello.txt -w '%{http_code}' https://zeus-hello.amin-ck.workers.dev/)
-
-          # 2. the same panel under a second name: is this deployment broken or is the code?
-          (cd worker && npx wrangler deploy --config wrangler.generated.jsonc --name zeus-probe > /tmp/probe.log 2>&1) || true
-          probe=$(curl -sS -o /tmp/probe.txt -w '%{http_code}' "https://zeus-probe.amin-ck.workers.dev/?debug=1")
-
-          meta=$(curl -sS -H "Authorization: Bearer $TOKEN" "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/workers/scripts/zeus-lite" | head -c 360 | tr '\n\r' ' ')
-          echo "::error title=Probe::hello=$hello probe=$probe probeBody=$(head -c 200 /tmp/probe.txt | tr '\n\r' ' ') | deployTail=$(tail -c 200 /tmp/probe.log | tr '\n\r' ' ') | meta=$meta"
-
-      - name: Why the Worker is unhappy (tail)
-        if: failure()
-        env:
-          DEPLOY_ENV: ${{ secrets.DEPLOY_ENV }}
-        run: |
-          set -uo pipefail
-          TOKEN=$(printf '%s\n' "$DEPLOY_ENV" | sed -nE 's/^(CLOUDFLARE_API_TOKEN|CF_API_TOKEN)=//p' | head -1 | tr -d '\r' | tr -d '"' | tr -d "'")
-          ACCOUNT=$(printf '%s\n' "$DEPLOY_ENV" | sed -nE 's/^(CLOUDFLARE_ACCOUNT_ID|CF_ACCOUNT_ID)=//p' | head -1 | tr -d '\r' | tr -d '"' | tr -d "'")
-          export CLOUDFLARE_API_TOKEN="$TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT"
-          if [ -z "$TOKEN" ]; then echo "::error title=Tail::no token in DEPLOY_ENV"; exit 0; fi
-          (cd worker && npx wrangler tail zeus-lite --format json > /tmp/tail.log 2>&1 &)
-          sleep 12
-          curl -sS -o /tmp/body.txt -w 'status %{http_code}\n' "https://zeus-lite.amin-ck.workers.dev/?debug=1"
-          sleep 6
-          pkill -f "wrangler tail" || true
-          echo "--- what is deployed ---"
-          curl -sS -H "Authorization: Bearer $TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/workers/scripts/zeus-lite/content" -o /tmp/script.js || true
-          echo "script bytes: $(wc -c < /tmp/script.js)"
-          echo "has the new entry: $(grep -c 'zeus:' /tmp/script.js || true)"
-          curl -sS -H "Authorization: Bearer $TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/workers/scripts/zeus-lite/settings" -o /tmp/settings.json || true
-          head -c 700 /tmp/settings.json
-          echo "--- codes ---"
-          for path in / /api/me /nope; do
-            echo "$path → $(curl -sS -o /dev/null -w '%{http_code}' "https://zeus-lite.amin-ck.workers.dev$path")"
-          done
-          echo "--- tail ---"; head -c 1500 /tmp/tail.log
-          flat=$(head -c 400 /tmp/tail.log | tr '\n\r' ' ' | tr -d '"')
-          diag="bytes=$(wc -c < /tmp/script.js) marker=$(grep -c 'zeus:' /tmp/script.js || true) codes=$(for p in / /api/me /nope; do printf '%s:%s ' "$p" "$(curl -sS -o /dev/null -w '%{http_code}' "https://zeus-lite.amin-ck.workers.dev$p")"; done)"
-          body=$(head -c 120 /tmp/script.js | tr '\n\r' ' ')
-          echo "::error title=Diagnostics::$diag | content: $body | settings: $(head -c 200 /tmp/settings.json | tr '\n\r' ' ') | tail: ${flat:-(none)}"
-          echo "--- body ---"; head -c 400 /tmp/body.txt
+        run: node scripts/diagnose.mjs
 
       - name: What to write down
         run: |

@@ -16,30 +16,14 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { credentials } from './env.mjs';
+
 const root = fileURLToPath(new URL('../', import.meta.url));
 const workerDir = `${root}worker/`;
 const DB_NAME = 'zeus-db';
 const WORKER_NAME = 'zeus-lite';
 const GENERATED_CONFIG = 'wrangler.generated.jsonc';
 const dryRun = process.argv.includes('--dry-run');
-
-/** Read a dotenv-shaped blob into the environment, without overwriting what is already set. */
-export function absorbEnvFile(text) {
-  for (const line of String(text ?? '').split(/\r?\n/)) {
-    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (!match) continue;
-    const [, key, raw] = match;
-    const value = raw.trim().replace(/^["']|["']$/g, '');
-    if (value && !process.env[key]) process.env[key] = value;
-  }
-}
-
-export function credentials() {
-  absorbEnvFile(process.env.DEPLOY_ENV);
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID || process.env.CLOUDFLARE_ACCOUNT || '';
-  const token = process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN || process.env.CLOUDFLARE_TOKEN || '';
-  return { accountId, token };
-}
 
 const api = async (path, init = {}) => {
   const { accountId, token } = credentials();
