@@ -1,0 +1,13 @@
+# Workers this repository created while the panel was being made ready. One name (or a `*` pattern) per line.
+# The panel itself (zeus) is refused by scripts/cleanup.mjs.
+zeus-probe*
+zeus-nodb*
+zeus-dbtest*
+zeus-fresh-*
+zeus-new-*
+zeus-old-*
+zeus-hello
+zeus-lite
+zeus-panel
+# the previous project, which the panel replaces (already deleted)
+# amin-chat

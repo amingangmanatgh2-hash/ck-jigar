@@ -1,0 +1,51 @@
+{
+  "name": "zeus-lite-windows",
+  "version": "1.0.0",
+  "description": "Zeus Lite — a Windows client for the configs the panel makes",
+  "main": "main.js",
+  "author": "Zeus Lite",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node --check core/config.js && node --check core/store.js && node --check renderer/app.js",
+    "build": "electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.zeuslite.windows",
+    "productName": "Zeus Lite",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "core/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Zeus Lite",
+      "artifactName": "ZeusLite-Setup-${version}.exe"
+    }
+  }
+}

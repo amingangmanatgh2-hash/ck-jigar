@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [Main, 'arena/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  panel:
+    name: Panel (tests + bundle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Tests
+        run: npm test
+      - name: Bundle
+        run: npm run build
+      - name: The Worker bundles for Cloudflare
+        run: npx wrangler deploy --dry-run --outdir /tmp/zeus-dist --config wrangler.jsonc
+        working-directory: worker

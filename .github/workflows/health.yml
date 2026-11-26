@@ -1,0 +1,27 @@
+# Asks the live panel and Cloudflare how things are, and puts the answer in an annotation.
+# Push a change to `deploy/HEALTH` to run it.
+name: Health
+
+on:
+  push:
+    branches: [Main, 'arena/**']
+    paths: ['deploy/HEALTH']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DEPLOY_ENV: ${{ secrets.DEPLOY_ENV }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node scripts/diagnose.mjs

@@ -1,0 +1,123 @@
+# Publishes the panel to the Cloudflare account behind the DEPLOY_ENV repository secret, then checks the live
+# service: the page loads, the API refuses strangers, the right password is accepted, and the overview answers.
+#
+# Start it either from Actions → "Deploy panel" → Run workflow, or by changing deploy/REQUEST (line 1: "deploy").
+name: Deploy panel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [Main, 'arena/**']
+    paths: ['deploy/REQUEST']
+
+concurrency:
+  group: deploy-panel
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      DEPLOY_ENV: ${{ secrets.DEPLOY_ENV }}
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Deploy
+        id: deploy
+        run: node scripts/deploy.mjs
+      - name: The deployment is registered
+        id: where
+        run: |
+          URL=$(cat worker/.deployed-url | tr -d '[:space:]')
+          if [ -z "$URL" ]; then echo "::error title=Address::the deployment did not report an address"; exit 1; fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "### Panel: $URL" >> "$GITHUB_STEP_SUMMARY"
+      - name: Check the live service
+        env:
+          URL: ${{ steps.where.outputs.url }}
+        run: |
+          set -euo pipefail
+          echo "checking $URL"
+          sleep 4
+          code="000"
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -sS -o /tmp/page.html -w '%{http_code}' "$URL/?debug=1")
+            echo "GET / attempt $attempt → $code"
+            [ "$code" = "200" ] && break
+            sleep 5
+          done
+          if [ "$code" != "200" ]; then
+            echo "--- body ---"; head -c 2000 /tmp/page.html; echo
+            snippet=$(head -c 700 /tmp/page.html | tr '\n\r' '  ')
+            echo "::error title=Page answered $code::$snippet"
+            exit 1
+          fi
+          grep -q 'ZEUS LITE' /tmp/page.html || { echo "::error title=Page::the panel page did not load"; exit 1; }
+
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/me")
+          [ "$code" = "401" ] || { echo "::error title=Auth::/api/me answered $code instead of 401"; exit 1; }
+
+          jar=$(mktemp)
+          if [ -n "${ADMIN_PASSWORD:-}" ]; then PASS="$ADMIN_PASSWORD"; else PASS="amin_ck"; fi
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -c "$jar" -X POST "$URL/api/auth" \
+            -H 'Content-Type: application/json' -d "{\"password\":\"$PASS\"}")
+          [ "$code" = "200" ] || { echo "::error title=Sign in::/api/auth answered $code — is the password right?"; exit 1; }
+
+          code=$(curl -sS -o /tmp/me.json -w '%{http_code}' -b "$jar" "$URL/api/me")
+          [ "$code" = "200" ] || { echo "::error title=Session::/api/me answered $code with a fresh session"; exit 1; }
+
+          overview=$(curl -fsS -b "$jar" "$URL/api/overview")
+          echo "$overview"
+          echo "$overview" | grep -q '"users"' || { echo "::error title=Overview::no user count in the answer"; exit 1; }
+
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/sub/aaaaaaaaaaaaaaaaaaaaaaaa")
+          [ "$code" = "404" ] || { echo "::error title=Subscription::an unknown token answered $code instead of 404"; exit 1; }
+
+          # a whole user, end to end: create, read the links, read the subscription, then remove it
+          created=$(curl -sS -b "$jar" -X POST "$URL/api/users" -H 'Content-Type: application/json' \
+            -d '{"name":"smoke test","trafficLimit":1073741824,"expiresAt":4102444800000}')
+          id=$(echo "$created" | jq -r '.user.id // empty')
+          token=$(echo "$created" | jq -r '.user.token // empty')
+          [ -n "$id" ] && [ -n "$token" ] || { echo "::error title=User::could not create a user: $created"; exit 1; }
+
+          detail=$(curl -sS -b "$jar" "$URL/api/users/$id")
+          link=$(echo "$detail" | jq -r '.links[0] // empty')
+          echo "$link" | grep -q '^vless://' || { echo "::error title=Links::no vless link: $detail"; exit 1; }
+
+          sub=$(curl -sS "$URL/sub/$token?raw=1")
+          echo "$sub" | grep -q '^vless://' || { echo "::error title=Subscription::empty: $sub"; exit 1; }
+
+          code=$(curl -sS -o /tmp/status.html -w '%{http_code}' "$URL/status/$token")
+          [ "$code" = "200" ] || { echo "::error title=Status page::$code"; exit 1; }
+
+          curl -sS -b "$jar" -X DELETE "$URL/api/users/$id" > /dev/null
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/sub/$token")
+          [ "$code" = "404" ] || { echo "::error title=Delete::the subscription still answers $code"; exit 1; }
+
+          echo "::notice title=Live::panel, sign in, a user, its links, its subscription, the status page — all real"
+          echo "First link built: $link" >> "$GITHUB_STEP_SUMMARY"
+      - name: Why it failed (one readable line)
+        if: failure()
+        env:
+          DEPLOY_ENV: ${{ secrets.DEPLOY_ENV }}
+        run: node scripts/diagnose.mjs
+
+      - name: What to write down
+        run: |
+          {
+            echo ""
+            echo "**Panel:** ${{ steps.where.outputs.url }}"
+            echo ""
+            echo "Open it, sign in (the password is the \`ADMIN_PASSWORD\` secret, or \`amin_ck\` when no secret is set) and change it from the 🔑 button."
+          } >> "$GITHUB_STEP_SUMMARY"
