@@ -95,17 +95,38 @@ async function main() {
     say('d1', String(err.message ?? err));
   }
 
-  // the same code and the same binding under a name that has never been deployed
+  // three probes with the same code: no database, the old database, the new one
   try {
-    const generated = JSON.parse(readFileSync(`${workerDir}wrangler.generated.jsonc`, 'utf8'));
-    const freshName = `zeus-fresh-${Date.now().toString(36).slice(-4)}`;
-    writeFileSync(`${workerDir}wrangler.fresh.jsonc`, JSON.stringify({ ...generated, name: freshName }, null, 2));
-    const deployed = wrangler(['deploy', '--config', 'wrangler.fresh.jsonc']);
-    await new Promise((resolve) => setTimeout(resolve, 6000));
-    const fresh = await statusOf(`https://${freshName}.amin-ck.workers.dev/?debug=1`);
-    say('freshWorker', `${freshName} ${fresh.status} title="${titleOf(fresh.body)}" exit ${deployed.code} ${deployed.out.slice(-80)}`);
+    const source = readFileSync(`${workerDir}wrangler.jsonc`, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+      .replace(/,(?=\s*[}\]])/g, '');
+    const base = JSON.parse(source);
+    const dbs = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database?per_page=100`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then((r) => r.json());
+    const byName = new Map((dbs.result ?? []).map((db) => [db.name, db.uuid ?? db.id]));
+    const cases = [
+      ['fresh-nodb', null],
+      ['fresh-new', byName.get('zeus-db')],
+      ['fresh-old', byName.get('amin-chat-db')],
+    ];
+    for (const [suffix, id] of cases) {
+      const name = `zeus-${suffix}-${Date.now().toString(36).slice(-4)}`;
+      const config = { ...base, name };
+      if (id) {
+        config.d1_databases = [{ binding: 'DB', database_name: suffix === 'fresh-old' ? 'amin-chat-db' : 'zeus-db', database_id: id, migrations_dir: 'migrations' }];
+      } else {
+        delete config.d1_databases;
+      }
+      writeFileSync(`${workerDir}wrangler.probe.jsonc`, JSON.stringify(config, null, 2));
+      const deployed = wrangler(['deploy', '--config', 'wrangler.probe.jsonc']);
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+      const status = await statusOf(`https://${name}.amin-ck.workers.dev/?debug=1`);
+      say(suffix, `${status.status} title="${titleOf(status.body)}" exit ${deployed.code}`);
+    }
   } catch (err) {
-    say('freshWorker', String(err.message ?? err));
+    say('probes', String(err.message ?? err));
   }
 
   // the Worker's own words: wrangler tail while a request is made
