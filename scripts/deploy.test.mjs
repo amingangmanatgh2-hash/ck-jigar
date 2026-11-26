@@ -507,6 +507,23 @@ test('the workflow registers the address after the tests and before the deploy, 
   assert.match(smoke, /if \[ "\$AMIN_R2" = "off" \] && \[ "\$FILES" = "true" \]; then echo "::warning title=File storage::/);
   assert.match(smoke, /if \[ "\$AMIN_R2" != "off" \] && \[ "\$FILES" = "false" \]; then echo "::warning title=File storage::/);
   assert.match(smoke, /\| File storage \(R2\) \| \$FILES \|/);
+  // sign-in under the plan's CPU limit: an UNKNOWN user costs the same hashing as a real one, so it must be answered 401 INVALID_CREDENTIALS;
+  // nothing is created; a 5xx/error page fails the run with the way out; a rate limit proves nothing and only warns
+  assert.match(smoke, /-X POST -H 'Content-Type: application\/json' --data '\{"username":"smoke_probe_nobody","password":"smoke-probe-not-a-password"\}' "\$\{TARGET%\/\}\/api\/auth\/login"/);
+  assert.match(smoke, /if \[ "\$LOGIN" = "401" \] && grep -q 'INVALID_CREDENTIALS' login\.json; then/);
+  assert.match(smoke, /elif \[ "\$LOGIN" = "429" \]; then\n\s+echo "::warning title=Sign-in check::/);
+  assert.match(smoke, /::error title=Sign-in does not work::an unknown user got HTTP \$LOGIN instead of 401/);
+  assert.match(smoke, /lower PASSWORD_HASH_ITERATIONS in apps\/api\/wrangler\.jsonc \(now 20000, never below 10000\)/);
+  assert.match(smoke, /FAILED\*\* \(HTTP \$LOGIN\)\. See the error annotation\."; \} >> "\$GITHUB_STEP_SUMMARY"\n\s+exit 1\n\s+fi\n\s+exit 0/, 'a failed sign-in check fails the run (the exit 1 is inside that branch)');
+  assert.match(smoke, /curl -sS -o login\.json -w '%\{http_code\}' --max-time 20 -X POST/, 'the probe has a deadline');
+  assert.ok(smoke.indexOf('title=Sign-in check') > smoke.indexOf('/api/auth/login'));
+  // the probe must stay harmless: the one username it uses is not one anybody could register as an administrator, and it creates nothing
+  assert.ok(!/\/api\/auth\/register/.test(smoke), 'the smoke check never registers anybody');
+  assert.ok(USERNAME_PATTERN.test('smoke_probe_nobody'));
+  assert.ok(!RESERVED_USERNAMES.includes('smoke_probe_nobody'));
+  // the number the message quotes is the real setting, and 10000 is the real floor
+  const config = readFileSync(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8');
+  assert.match(config, /"PASSWORD_HASH_ITERATIONS": "20000"/);
   // the report of failures: "Tests failed" only when the tests failed; the account step has its own message
   const wrong = stepOf(text, 'What went wrong');
   assert.match(wrong, /DEPLOY_OUTCOME: \$\{\{ steps\.deploy\.outcome \}\}/);

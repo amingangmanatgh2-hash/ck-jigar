@@ -186,6 +186,22 @@ jobs:
               # what the preflight decided about the bucket must be what is live
               if [ "$AMIN_R2" = "off" ] && [ "$FILES" = "true" ]; then echo "::warning title=File storage::R2 was left out of this deployment, but the live service reports a file bucket"; fi
               if [ "$AMIN_R2" != "off" ] && [ "$FILES" = "false" ]; then echo "::warning title=File storage::the live service reports no file bucket although R2 was expected to be in this deployment"; fi
+              # Does signing in work under the CPU limit of this plan? Hashing a password is the heaviest thing a request does here (the Free
+              # plan allows 10 ms of CPU), and an unknown user costs exactly the same hashing as a real one, so a sign-in with a user that does
+              # not exist must be answered 401 INVALID_CREDENTIALS. Nothing is created or changed. A 5xx or an error page (Cloudflare error
+              # 1102 = CPU limit exceeded) means nobody could register or sign in.
+              LOGIN=$(curl -sS -o login.json -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' --data '{"username":"smoke_probe_nobody","password":"smoke-probe-not-a-password"}' "${TARGET%/}/api/auth/login" 2>login.err || true)
+              if [ "$LOGIN" = "401" ] && grep -q 'INVALID_CREDENTIALS' login.json; then
+                echo "OK: the sign-in path (password hashing) runs within this plan's CPU limit: an unknown user got HTTP 401"
+                { echo; echo "Sign-in under this plan's CPU limit: **works** (a user that does not exist got HTTP 401, after the same password hashing a real sign-in does)."; } >> "$GITHUB_STEP_SUMMARY"
+              elif [ "$LOGIN" = "429" ]; then
+                echo "::warning title=Sign-in check::the sign-in check was rate-limited (HTTP 429), so it proved nothing; run the deployment again, or try to register"
+              else
+                BODY=$(head -c 200 login.json 2>/dev/null | tr '\n' ' ')
+                echo "::error title=Sign-in does not work::an unknown user got HTTP $LOGIN instead of 401 ($BODY $(head -c 120 login.err | tr '\n' ' ')). On the Free plan this is usually Cloudflare error 1102 (more than 10 ms of CPU for hashing the password): lower PASSWORD_HASH_ITERATIONS in apps/api/wrangler.jsonc (now 20000, never below 10000) and run again, or move to Workers Paid."
+                { echo; echo "Sign-in under this plan's CPU limit: **FAILED** (HTTP $LOGIN). See the error annotation."; } >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+              fi
               exit 0
             fi
             LAST="HTTP $CODE $(head -c 160 curl.err | tr '\n' ' ')"
