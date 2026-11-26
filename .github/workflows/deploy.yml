@@ -13,9 +13,12 @@
 #                           service runs on Workers AI alone.
 # The names must match exactly. Before anything is published a preflight asks Cloudflare and Groq whether everything is in place
 # (token, Workers, D1, R2, Groq) and lists ALL problems at once, with the fix for each; it prints no secret.
-# Also, once: open Workers & Pages in the Cloudflare dashboard so your account has a workers.dev address (it asks you to pick one),
-# subscribe to R2 (Storage & databases > R2 > Overview > checkout; free monthly allowance). The free Workers plan is enough to try it, with
-# two limits (10 ms of CPU per request, 100 000 requests a day) explained in docs/deploy.md; Workers Paid is the safer plan.
+# Two things need no action from you any more: a new account has no workers.dev address, so the step "Prepare the account" registers a free
+# one right before publishing (it says which name; to choose it yourself, open Workers & Pages in the dashboard once, before the run). And
+# R2: it needs a payment method that not everybody can add, so when the account has not switched R2 on the service goes live WITHOUT file
+# storage (sending files and photos is off, everything else works) and the run says so; switch R2 on later (Storage & databases > R2 >
+# Overview > subscribe; free monthly allowance) and run again to add it. The free Workers plan is enough to try it, with two limits (10 ms
+# of CPU per request, 100 000 requests a day) explained in docs/deploy.md; Workers Paid is the safer plan.
 # Before the first run, put your own username in "ADMIN_USERNAMES" in apps/api/wrangler.jsonc, and register it as soon as the
 # service is up (docs/deploy.md).
 #
@@ -93,9 +96,19 @@ jobs:
           set -o pipefail
           npm run preflight 2>&1 | tee preflight.log
       - name: Tests first (nothing is published when one fails)
+        id: tests
         run: |
           set -o pipefail
           npm test 2>&1 | tee test.log
+      - name: Prepare the account (a workers.dev address, when the account has none)
+        id: account
+        if: steps.ask.outputs.mode == 'deploy'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || steps.bundle.outputs.account }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN || steps.bundle.outputs.token }}
+        run: |
+          set -o pipefail
+          npm run prepare:account 2>&1 | tee account.log
       - name: Deploy (build, then migrate and publish in the safe order)
         id: deploy
         if: steps.ask.outputs.mode == 'deploy'
@@ -103,12 +116,15 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || steps.bundle.outputs.account }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN || steps.bundle.outputs.token }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY || steps.bundle.outputs.groq }}
+          AMIN_R2: ${{ steps.preflight.outputs.r2 }}
         run: |
           set -o pipefail
           npm run deploy 2>&1 | tee deploy.log
       - name: Address of the live service
         id: address
         if: success() && steps.ask.outputs.mode == 'deploy'
+        env:
+          AMIN_R2: ${{ steps.preflight.outputs.r2 }}
         run: |
           URL=$(sed -E 's/\x1b\[[0-9;]*m//g' deploy.log | grep -oE 'https://[A-Za-z0-9.-]+\.workers\.dev' | head -1 || true)
           echo "url=$URL" >> "$GITHUB_OUTPUT"
@@ -124,6 +140,10 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$URL" ]; then echo "::notice title=AMIN CHAT is live::$URL"; fi
+          if [ "$AMIN_R2" = "off" ]; then
+            { echo; echo "**File storage is OFF:** R2 is not switched on for this account, so sending files and photos is not available (everything else works). To add it: Cloudflare dashboard > Storage & databases > R2 > Overview > subscribe (it asks for a payment method; the monthly free allowance is enough), then run the deployment again."; } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=File storage is off::R2 is not switched on for this account, so the service is live without file storage. Switch R2 on and run the deployment again to add it."
+          fi
           GROQ_LINES=$(sed -E 's/\x1b\[[0-9;]*m//g' deploy.log | grep -E '^\[deploy\] (WARNING: )?Groq' | cut -c1-400 || true)
           if [ -n "$GROQ_LINES" ]; then { echo; echo '```'; echo "$GROQ_LINES"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
       - name: Check that it answers like AMIN CHAT
@@ -229,6 +249,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: What went wrong (the lines that matter, as annotations)
         if: failure()
+        env:
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
         run: |
           say() { # $1 = title, rest = text: one annotation, one line, percent signs escaped
             local t="$1"; shift; local x="$*"; x="${x//'%'/'%25'}"; echo "::error title=$t::${x:-no details; open the log of the red step}"
@@ -236,5 +258,6 @@ jobs:
           clean() { sed -E 's/\x1b\[[0-9;]*m//g' "$1" 2>/dev/null; }
           if [ -s deploy.log ]; then say "Deploy failed" "$(clean deploy.log | grep -E '✘|ERROR|Error|error|failed|nobody can register|Could not ask|WARNING' | head -n 8 | cut -c1-300 | tr '\n' '|')"; fi
           if [ -s preflight.log ] && ! [ -s test.log ]; then say "Nothing was published" "The preflight found problems: each one is its own annotation above, with the fix. Fix them (or the secrets), then run again."; fi
-          if [ -s test.log ] && ! [ -s deploy.log ]; then say "Tests failed" "$(clean test.log | grep -E 'FAIL |not ok |AssertionError|Tests +[0-9]+ failed' | head -n 8 | cut -c1-300 | tr '\n' '|')"; fi
+          if [ "$TESTS_OUTCOME" = "failure" ] && [ -s test.log ] && ! [ -s deploy.log ]; then say "Tests failed" "$(clean test.log | grep -E 'FAIL |not ok |AssertionError|Tests +[0-9]+ failed' | head -n 8 | cut -c1-300 | tr '\n' '|')"; fi
+          if [ -s account.log ] && ! [ -s deploy.log ] && [ "$TESTS_OUTCOME" != "failure" ]; then say "Nothing was published" "$(clean account.log | grep -E '^\[address\]' | tail -n 3 | cut -c1-400 | tr '\n' '|')"; fi
           if [ -s plan.log ] && ! [ -s test.log ] && ! [ -s preflight.log ]; then say "The plan was refused" "$(clean plan.log | grep -E 'ADMIN_USERNAMES|nobody can register|Nothing was' | head -n 4 | cut -c1-400 | tr '\n' '|')"; fi

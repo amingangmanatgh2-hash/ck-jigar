@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -153,20 +153,39 @@ test('the commonest first-time problem: a token without D1 → says exactly whic
   assert.equal(level(results, 'rights'), 'info');
 });
 
-test('R2 not switched on is told apart from a missing right', async () => {
+test('R2 not switched on does NOT block (it needs a payment method): it warns, says what is lost, and flags r2=off; a missing right still blocks', async () => {
+  const r2 = (results) => results.find((r) => r.id === 'r2');
   const off = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/r2/buckets`]: () => cfErr(403, 10042, 'Please enable R2 through the Cloudflare Dashboard.') }).fetch, ...quick });
-  assert.equal(level(off, 'r2'), 'fail');
+  assert.equal(level(off, 'r2'), 'warn');
+  assert.equal(r2(off).r2off, true);
   assert.match(detail(off, 'r2'), /not switched on/);
+  assert.match(detail(off, 'r2'), /goes live WITHOUT file storage/);
+  assert.match(detail(off, 'r2'), /sending files and photos does not/);
+  assert.match(detail(off, 'r2'), /voice-to-text work/, 'voice input does not need R2 (the audio goes straight to the model)');
   assert.match(detail(off, 'r2'), /R2 → Overview → subscribe/);
+  assert.match(detail(off, 'r2'), /payment method/);
+  assert.match(detail(off, 'r2'), /run the deployment again/);
+  assert.equal(off.filter((r) => r.level === 'fail').length, 0, 'nothing blocks');
+  assert.equal(level(off, 'rights'), undefined);
   // each signal alone is enough (Cloudflare could reword the message, or drop the code)
   const codeOnly = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/r2/buckets`]: () => cfErr(403, 10042, 'Forbidden') }).fetch, ...quick });
   assert.match(detail(codeOnly, 'r2'), /not switched on/);
+  assert.equal(r2(codeOnly).r2off, true);
   const messageOnly = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/r2/buckets`]: () => cfErr(403, 1, 'Please enable R2 through the Cloudflare Dashboard.') }).fetch, ...quick });
   assert.match(detail(messageOnly, 'r2'), /not switched on/);
+  assert.equal(r2(messageOnly).r2off, true);
+  // a missing RIGHT is a different thing: the person can fix it in a minute, and the deployment must not quietly drop the bucket for it
   const noRight = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/r2/buckets`]: () => cfErr(403, 10000, 'Authentication error') }).fetch, ...quick });
   assert.equal(level(noRight, 'r2'), 'fail');
+  assert.equal(r2(noRight).r2off, undefined);
   assert.match(detail(noRight, 'r2'), /Workers R2 Storage → Edit/);
   assert.equal(level(noRight, 'rights'), 'info', 'a refused R2 alone brings the list of rows');
+  // an outage is not "off" either
+  const down = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/r2/buckets`]: () => cfErr(500, 1, 'boom') }).fetch, ...quick });
+  assert.equal(level(down, 'r2'), 'fail');
+  assert.equal(r2(down).r2off, undefined);
+  // R2 switched on and healthy: no flag
+  assert.equal(r2(await runChecks({ env: env(), fetch: world().fetch, ...quick })).r2off, undefined);
 });
 
 /**
@@ -211,7 +230,7 @@ test('a token that can only LIST Workers (a "Workers Tail" row) is not reported 
   assert.equal(level(both, 'workers'), 'ok');
   const noAddress = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(404, 10007, 'workers.api.error.no_subdomain') }).fetch, ...quick });
   assert.equal(level(noAddress, 'workers'), 'ok');
-  assert.equal(level(noAddress, 'subdomain'), 'fail');
+  assert.equal(level(noAddress, 'subdomain'), 'warn');
   // an outage of the address call is neither (the retry already ran)
   const outage = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(500, 1, 'boom') }).fetch, ...quick });
   assert.equal(level(outage, 'workers'), 'ok');
@@ -230,7 +249,7 @@ test('the list of rows is documented where the person reads it (the deployment g
 
 test('no list of rows when nothing was refused: R2 not switched on, an outage, or everything fine', async () => {
   const off = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/r2/buckets`]: () => cfErr(403, 10042, 'Please enable R2 through the Cloudflare Dashboard.') }).fetch, ...quick });
-  assert.equal(level(off, 'r2'), 'fail');
+  assert.equal(level(off, 'r2'), 'warn');
   assert.equal(level(off, 'rights'), undefined);
   // a 5xx that does not clear up is "unexpected", not "the token has no right"
   const down = await runChecks({
@@ -309,16 +328,20 @@ test('existing resources are recognised: an update, not a first deployment', asy
   assert.match(detail(results, 'r2'), /"amin-chat-files" exists/);
 });
 
-test('no workers.dev address stops a first deployment (Wrangler cannot ask inside GitHub) and says where to get one; unreadable is only a warning', async () => {
+test('no workers.dev address does not block: it warns that one is registered automatically (Wrangler cannot ask inside GitHub); unreadable is a different warning', async () => {
   const none = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(404, 10007, 'workers.api.error.no_subdomain') }).fetch, ...quick });
-  assert.equal(level(none, 'subdomain'), 'fail');
-  assert.match(detail(none, 'subdomain'), /no workers\.dev address yet, and Wrangler cannot ask you for one inside GitHub/);
-  assert.match(detail(none, 'subdomain'), /Open "Workers & Pages"/);
+  assert.equal(level(none, 'subdomain'), 'warn');
+  assert.match(detail(none, 'subdomain'), /no workers\.dev address yet\. Wrangler cannot ask for one inside GitHub/);
+  assert.match(detail(none, 'subdomain'), /registers a free one for you/);
+  assert.match(detail(none, 'subdomain'), /the name is picked automatically and the run says which/);
+  assert.match(detail(none, 'subdomain'), /To choose the name yourself instead, open "Workers & Pages"/);
   assert.match(detail(none, 'subdomain'), /https:\/\/dash\.cloudflare\.com\/\?to=\/:account\/workers\/onboarding/);
   assert.ok(!detail(none, 'subdomain').includes(ACCOUNT), 'the account id is not printed (the link says :account)');
+  assert.equal(none.filter((r) => r.level === 'fail').length, 0, 'nothing blocks');
   assert.equal(level(none, 'workers'), 'ok', 'Workers itself is fine');
   const empty = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfOk({}) }).fetch, ...quick });
-  assert.equal(level(empty, 'subdomain'), 'fail');
+  assert.equal(level(empty, 'subdomain'), 'warn');
+  assert.match(detail(empty, 'subdomain'), /registers a free one for you/);
   assert.equal(level(none, 'rights'), undefined, 'a missing address is not a token problem');
   assert.equal(level(empty, 'rights'), undefined);
   // when the configuration does not publish to workers.dev, no address is needed
@@ -329,6 +352,7 @@ test('no workers.dev address stops a first deployment (Wrangler cannot ask insid
   const otherNotFound = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(404, 7003, 'no route') }).fetch, ...quick });
   assert.equal(level(otherNotFound, 'subdomain'), 'warn');
   assert.match(detail(otherNotFound, 'subdomain'), /could not be read \(HTTP 404, code 7003/);
+  assert.ok(!/registers a free one/.test(detail(otherNotFound, 'subdomain')), 'nothing is registered on a guess');
   // an answer that is neither "one", "none" nor "refused" is only a warning
   const odd = await runChecks({ env: env(), fetch: world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(500, 1, 'boom') }).fetch, ...quick });
   assert.equal(level(odd, 'subdomain'), 'warn');
@@ -354,7 +378,7 @@ test('wantsWorkersDev follows Wrangler\'s rule: workers_dev when set, otherwise 
   assert.equal(wantsWorkersDev(readFileSync(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8')), true);
 });
 
-test('main reads the configuration of the Worker: with routes only, a missing address is not a problem; unreadable → the stricter rule', async () => {
+test('main reads the configuration of the Worker: with routes only, no address is needed at all; an unreadable file takes the stricter rule (one is registered)', async () => {
   const noAddress = world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(404, 10007, 'no_subdomain') });
   const run = async (readConfig) => {
     const logs = [];
@@ -362,15 +386,51 @@ test('main reads the configuration of the Worker: with routes only, a missing ad
     return { code, out: logs.join('\n') };
   };
   const real = await run(undefined);
-  assert.equal(real.code, 1, 'the real configuration publishes to workers.dev');
-  assert.match(real.out, /✗ workers\.dev address — the account has no workers\.dev address yet/);
+  assert.equal(real.code, 0, 'a missing address no longer blocks: it is registered right before publishing');
+  assert.match(real.out, /! workers\.dev address — the account has no workers\.dev address yet/);
   const routesOnly = await run(() => '{ "routes": [ { "pattern": "chat.example.com", "custom_domain": true } ] }');
   assert.equal(routesOnly.code, 0);
   assert.match(routesOnly.out, /– workers\.dev address — the account has none, and the configuration does not publish to workers\.dev/);
   const broken = await run(() => {
     throw new Error('no such file');
   });
-  assert.equal(broken.code, 1);
+  assert.equal(broken.code, 0);
+  assert.match(broken.out, /! workers\.dev address — the account has no workers\.dev address yet/, 'unreadable → the stricter rule');
+});
+
+test('main hands r2=off to the deploy step through GITHUB_OUTPUT, only when R2 is not switched on; and says so when it cannot', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'preflight-'));
+  const off = () => world({ [`/accounts/${ACCOUNT}/r2/buckets`]: () => cfErr(403, 10042, 'Please enable R2 through the Cloudflare Dashboard.') });
+  const outFile = join(dir, 'out.txt');
+  const logs = [];
+  const code = await main({ env: env({ GITHUB_ACTIONS: 'true' }), fetch: off().fetch, log: (m) => logs.push(m), summaryFile: undefined, outputFile: outFile, ...quick });
+  assert.equal(code, 0, 'R2 being off does not fail the run');
+  assert.equal(readFileSync(outFile, 'utf8'), 'r2=off\n');
+  assert.match(logs.join('\n'), /R2 is off: the deployment will go live without file storage/);
+  assert.match(logs.join('\n'), /::warning title=Preflight: R2 file storage::R2 is not switched on/);
+  assert.match(logs.join('\n'), /Warnings: R2 file storage\./, 'the overview names it');
+  // a second run appends nothing else and never writes anything for a healthy R2
+  const okFile = join(dir, 'ok.txt');
+  assert.equal(await main({ env: env(), fetch: world().fetch, log: () => {}, summaryFile: undefined, outputFile: okFile, ...quick }), 0);
+  assert.ok(!existsSync(okFile), 'nothing is handed on when R2 works');
+  // other warnings (no address yet, a rejected Groq key) have nothing to do with the bucket: r2=off is for R2 alone
+  const otherWarnings = join(dir, 'other.txt');
+  const warned = world({ [`/accounts/${ACCOUNT}/workers/subdomain`]: () => cfErr(404, 10007, 'no_subdomain'), groq: () => json({ error: { code: 'invalid_api_key' } }, 401) });
+  assert.equal(await main({ env: env({ GROQ_API_KEY: GROQ }), fetch: warned.fetch, log: () => {}, summaryFile: undefined, outputFile: otherWarnings, ...quick }), 0);
+  assert.ok(!existsSync(otherWarnings), 'a warning that is not about R2 hands nothing on');
+  // a REFUSED R2 fails and does not hand anything on (the person fixes the token; the bucket is not dropped behind their back)
+  const refusedFile = join(dir, 'refused.txt');
+  const refused = world({ [`/accounts/${ACCOUNT}/r2/buckets`]: () => cfErr(403, 10000, 'Authentication error') });
+  assert.equal(await main({ env: env(), fetch: refused.fetch, log: () => {}, summaryFile: undefined, outputFile: refusedFile, ...quick }), 1);
+  assert.ok(!existsSync(refusedFile));
+  // R2 is off but there is nowhere to hand that on (not in GitHub Actions, or an unwritable file): it says what will happen
+  const nowhere = [];
+  assert.equal(await main({ env: env(), fetch: off().fetch, log: (m) => nowhere.push(m), summaryFile: undefined, outputFile: undefined, ...quick }), 0);
+  assert.match(nowhere.join('\n'), /cannot hand that to the deploy step \(no GITHUB_OUTPUT\)/);
+  const unwritable = [];
+  assert.equal(await main({ env: env(), fetch: off().fetch, log: (m) => unwritable.push(m), summaryFile: undefined, outputFile: dir, ...quick }), 0);
+  assert.match(unwritable.join('\n'), /cannot hand that to the deploy step/);
+  assert.ok(!/will go live without file storage/.test(unwritable.join('\n').replace(/R2 is not switched on[^\n]*/g, '')), 'no false promise when it was not handed on');
 });
 
 test('Groq problems never block: a rejected key, a rate limit, an outage and a malformed key all only warn', async () => {

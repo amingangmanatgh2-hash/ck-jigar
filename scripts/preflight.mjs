@@ -13,10 +13,12 @@
  *                  the account's workers.dev address. Cloudflare lets a row like "Workers Tail → Read" pass the first, but only the
  *                  "Workers Scripts" row (the one an upload needs) passes the second, so a token with the wrong Workers row is caught here
  *     d1           the token has the D1 right (the "Edit Cloudflare Workers" template does not include it)
- *     r2           R2 is switched on for the account and the token has the R2 right
- *     subdomain    the account has a workers.dev address. Wrangler cannot ask for one inside GitHub, so without it the first deployment
- *                  stops (read from Wrangler's own source). Only when the configuration wants workers.dev (the default). A REFUSED call is
- *                  reported under "workers"
+ *     r2           the token has the R2 right (a REFUSAL is blocking). R2 not being switched on at all is NOT blocking: it needs a payment
+ *                  method that not everybody can add, so the deployment then goes live WITHOUT file storage (the output "r2=off" tells
+ *                  the deploy step) and says so loudly; run again after switching R2 on and it is added
+ *     subdomain    NOT blocking any more: Wrangler cannot ask for a workers.dev address inside GitHub (read from its own source), so
+ *                  scripts/prepare-account.mjs registers a free one right before publishing. Only when the configuration wants workers.dev
+ *                  (the default). A REFUSED call is reported under "workers"
  *   not blocking (the service runs without it):
  *     groq         the optional Groq key works
  *   a hint, not a check (level "info"):
@@ -182,7 +184,7 @@ export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep 
         const buckets = Array.isArray(r.body?.result?.buckets) ? r.body.result.buckets.map((x) => x?.name) : [];
         results.push(ok('r2', 'R2 file storage', buckets.includes('amin-chat-files') ? 'on; the bucket "amin-chat-files" exists' : 'on; the first deployment creates the bucket "amin-chat-files"'));
       } else if (r.body?.errors?.some?.((e) => e?.code === 10042 || /enable R2|R2.*(not|never).*(enabled|activated|subscri)/i.test(String(e?.message)))) {
-        results.push(fail('r2', 'R2 file storage', `R2 is not switched on for this account (${cfProblem(r.status, r.body)}). Cloudflare dashboard → Storage & databases → R2 → Overview → subscribe (the monthly free allowance is enough).`));
+        results.push({ ...warn('r2', 'R2 file storage', `R2 is not switched on for this account (${cfProblem(r.status, r.body)}). This deployment goes live WITHOUT file storage: chat, AI, agents, memory, tasks and voice-to-text work, sending files and photos does not (the app says so instead of offering it). To add it: Cloudflare dashboard → Storage & databases → R2 → Overview → subscribe (Cloudflare asks for a payment method; the monthly free allowance is enough), then run the deployment again: it notices and switches file storage on.`), r2off: true });
       } else if (denied(r)) results.push(refused(fail('r2', 'R2 file storage', `R2 cannot be used with this token (${cfProblem(r.status, r.body)}). If R2 was never switched on: dashboard → Storage & databases → R2 → Overview → subscribe. Otherwise add Account → Workers R2 Storage → Edit to the token.`)));
       else results.push(fail('r2', 'R2 file storage', `Cloudflare answered unexpectedly (${cfProblem(r.status, r.body)}). Run it again; if it repeats, look at cloudflarestatus.com.`));
 
@@ -190,7 +192,7 @@ export async function runChecks({ env, fetch: fetchFn = globalThis.fetch, sleep 
       if (s.error) results.push(warn('subdomain', 'workers.dev address', s.error));
       else if (s.status === 200 && s.body?.result?.subdomain) results.push(ok('subdomain', 'workers.dev address', 'the account has one'));
       else if (denied(s)) results.push(skip('subdomain', 'workers.dev address', `not read: Cloudflare refuses the token here (${cfProblem(s.status, s.body)}); see "Workers" above`));
-      else if (noAddress && needsWorkersDev) results.push(fail('subdomain', 'workers.dev address', 'the account has no workers.dev address yet, and Wrangler cannot ask you for one inside GitHub, so the first deployment would stop. Open "Workers & Pages" in the Cloudflare dashboard once and choose a name (free, one minute): https://dash.cloudflare.com/?to=/:account/workers/onboarding'));
+      else if (noAddress && needsWorkersDev) results.push(warn('subdomain', 'workers.dev address', 'the account has no workers.dev address yet. Wrangler cannot ask for one inside GitHub, so right before publishing this deployment registers a free one for you (the name is picked automatically and the run says which). To choose the name yourself instead, open "Workers & Pages" in the Cloudflare dashboard once: https://dash.cloudflare.com/?to=/:account/workers/onboarding'));
       else if (noAddress) results.push(skip('subdomain', 'workers.dev address', 'the account has none, and the configuration does not publish to workers.dev, so none is needed'));
       else results.push(warn('subdomain', 'workers.dev address', `could not be read (${cfProblem(s.status, s.body)}). If it repeats, open "Workers & Pages" in the Cloudflare dashboard once: a new account is asked to choose an address there.`));
 
@@ -226,7 +228,7 @@ export function renderSummary(results) {
   return lines.join('\n');
 }
 
-export async function main({ env = process.env, fetch: fetchFn = globalThis.fetch, log = console.log, sleep, now, summaryFile = env.GITHUB_STEP_SUMMARY, readConfig = () => readFileSync(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8') } = {}) {
+export async function main({ env = process.env, fetch: fetchFn = globalThis.fetch, log = console.log, sleep, now, summaryFile = env.GITHUB_STEP_SUMMARY, outputFile = env.GITHUB_OUTPUT, readConfig = () => readFileSync(new URL('../apps/api/wrangler.jsonc', import.meta.url), 'utf8') } = {}) {
   const secrets = [env.CLOUDFLARE_API_TOKEN, env.GROQ_API_KEY].map((v) => (typeof v === 'string' ? v.trim() : '')).filter((v) => v.length >= 8);
   const clean = (text) => secrets.reduce((t, s) => redact(t, s), String(text));
   let needsWorkersDev = true;
@@ -260,6 +262,19 @@ export async function main({ env = process.env, fetch: fetchFn = globalThis.fetc
     } catch {
       // the summary is a convenience; the log above says the same
     }
+  }
+  if (results.some((r) => r.r2off)) {
+    // the deploy step reads it (AMIN_R2) and leaves the file bucket out of the configuration it publishes
+    let handed = false;
+    if (outputFile) {
+      try {
+        appendFileSync(outputFile, 'r2=off\n');
+        handed = true;
+      } catch {
+        handed = false;
+      }
+    }
+    log(handed ? '[preflight] R2 is off: the deployment will go live without file storage.' : '[preflight] R2 is off, but this run cannot hand that to the deploy step (no GITHUB_OUTPUT): the deployment would try to create the bucket and stop. Switch R2 on, or run it in GitHub Actions.');
   }
   const failed = results.filter((r) => r.level === 'fail');
   if (failed.length > 0) {

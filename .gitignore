@@ -31,3 +31,6 @@ keystore.b64
 .vscode/
 
 apps/api/.wrangler.dev-offline.jsonc
+
+# Written by scripts/deploy.mjs for a deployment without R2 (docs/deploy.md)
+apps/api/wrangler.no-r2.generated.jsonc
