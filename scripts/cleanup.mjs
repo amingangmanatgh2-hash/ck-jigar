@@ -39,7 +39,7 @@ for (const name of names) {
   }
   try {
     const response = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${name}?force=true`,
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/services/${name}?force=true`,
       { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
     );
     const body = await response.json().catch(() => ({}));
@@ -51,4 +51,15 @@ for (const name of names) {
 }
 
 if (deleted.length) console.log(`::notice title=Deleted::${deleted.join(', ')}`);
+
+// what is actually left in the account
+try {
+  const listed = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/services`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }).then((response) => response.json());
+  const remaining = (listed.result ?? []).map((service) => service.name ?? service.id);
+  console.log(`::notice title=Workers in the account::${remaining.join(', ') || '(none listed)'}`);
+} catch (err) {
+  console.log(`::warning title=Cleanup::could not list the remaining Workers: ${err.message}`);
+}
 if (failed.length) console.log(`::error title=Cleanup failed::${failed.join(' | ').slice(0, 900)}`);
