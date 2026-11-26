@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import { credentials } from './env.mjs';
 
-const KEEP = new Set(['zeus-panel']);
+const KEEP = new Set(['zeus']);
 const listFile = process.argv[2] ?? 'deploy/CLEANUP';
 const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -32,7 +32,28 @@ if (!accountId || !token) {
 const deleted = [];
 const failed = [];
 
-for (const name of names) {
+/** `zeus-fresh-*` style patterns, matched against the Workers the account really has. */
+let existing = [];
+try {
+  const listed = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/services`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }).then((response) => response.json());
+  existing = (listed.result ?? []).map((service) => service.name ?? service.id).filter(Boolean);
+} catch {
+  existing = [];
+}
+
+const targets = new Set();
+for (const entry of names) {
+  if (!entry.includes('*')) {
+    targets.add(entry);
+    continue;
+  }
+  const pattern = new RegExp(`^${entry.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
+  for (const name of existing) if (pattern.test(name)) targets.add(name);
+}
+
+for (const name of targets) {
   if (KEEP.has(name)) {
     console.log(`::warning title=Cleanup::${name} is the panel, it is kept`);
     continue;

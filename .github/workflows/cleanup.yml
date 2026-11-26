@@ -1,5 +1,5 @@
 # Deletes the Workers named in `deploy/CLEANUP`, one per line. Push a change to that file to run it.
-# The panel (zeus-panel) is refused, whatever the file says.
+# The panel (zeus) is refused, whatever the file says.
 name: Cleanup Workers
 
 on:

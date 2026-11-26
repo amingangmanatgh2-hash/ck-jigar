@@ -48,17 +48,17 @@ function titleOf(body) {
 
 async function main() {
   const { accountId, token } = credentials();
-  const panel = await statusOf('https://zeus-panel.amin-ck.workers.dev/?debug=1');
+  const panel = await statusOf('https://zeus.amin-ck.workers.dev/?debug=1');
   say('panel', `${panel.status} title="${titleOf(panel.body)}"`);
 
   const old = await statusOf('https://amin-chat.amin-ck.workers.dev/api/health');
   say('oldWorker', `${old.status} ${old.body.slice(0, 60)}`);
 
-  const plain = await statusOf('https://zeus-panel.amin-ck.workers.dev/');
+  const plain = await statusOf('https://zeus.amin-ck.workers.dev/');
   say('panelNoDebug', `${plain.status} title="${titleOf(plain.body)}"`);
 
   try {
-    const bust = await fetch(`https://zeus-panel.amin-ck.workers.dev/?r=${Math.random().toString(36).slice(2)}`, {
+    const bust = await fetch(`https://zeus.amin-ck.workers.dev/?r=${Math.random().toString(36).slice(2)}`, {
       headers: { 'Cache-Control': 'no-cache' },
     });
     const text = (await bust.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
@@ -76,7 +76,7 @@ async function main() {
     const r = json.result ?? {};
     return `date=${r.compatibility_date} flags=${JSON.stringify(r.compatibility_flags)} usage=${r.usage_model} bindings=${JSON.stringify((r.bindings ?? []).map((b) => `${b.type}:${b.name}`))}`;
   };
-  say('settings', await settingsOf('zeus-panel').catch((err) => String(err)));
+  say('settings', await settingsOf('zeus').catch((err) => String(err)));
 
   // is the database itself reachable?
   try {
@@ -131,7 +131,7 @@ async function main() {
 
   // the Worker's own words: wrangler tail while a request is made
   const { token: tailToken, accountId: tailAccount } = credentials();
-  const tail = spawn('npx', ['--no-install', 'wrangler', 'tail', 'zeus-panel', '--format', 'pretty'], {
+  const tail = spawn('npx', ['--no-install', 'wrangler', 'tail', 'zeus', '--format', 'pretty'], {
     cwd: workerDir,
     env: { ...process.env, CLOUDFLARE_API_TOKEN: tailToken, CLOUDFLARE_ACCOUNT_ID: tailAccount, WRANGLER_SEND_METRICS: 'false' },
   });
@@ -139,7 +139,7 @@ async function main() {
   tail.stdout.on('data', (chunk) => (tailText += String(chunk)));
   tail.stderr.on('data', (chunk) => (tailText += String(chunk)));
   await new Promise((resolve) => setTimeout(resolve, 12000));
-  await statusOf('https://zeus-panel.amin-ck.workers.dev/?debug=1');
+  await statusOf('https://zeus.amin-ck.workers.dev/?debug=1');
   await new Promise((resolve) => setTimeout(resolve, 6000));
   tail.kill('SIGKILL');
   say('tail', tailText.replace(/\s+/g, ' ').slice(-600) || '(nothing)');

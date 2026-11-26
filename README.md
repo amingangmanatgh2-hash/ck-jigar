@@ -11,7 +11,7 @@ A VLESS panel that runs entirely on **Cloudflare Workers + D1**, plus an **Andro
 
 | | |
 |---|---|
-| **آدرس** | **https://zeus-panel.amin-ck.workers.dev** |
+| **آدرس** | **https://zeus.amin-ck.workers.dev** |
 | رمز اولیه | `amin_ck` — از دکمهٔ 🔑 **تغییر رمز** عوضش کنید |
 | لینک اشتراک | `…/sub/<token>` |
 | صفحهٔ کاربر | `…/status/<token>` |

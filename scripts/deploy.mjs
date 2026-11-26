@@ -21,7 +21,7 @@ import { credentials } from './env.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const workerDir = `${root}worker/`;
 const DB_NAME = 'zeus-db';
-const WORKER_NAME = 'zeus-panel';
+const WORKER_NAME = 'zeus';
 const GENERATED_CONFIG = 'wrangler.generated.jsonc';
 const dryRun = process.argv.includes('--dry-run');
 
@@ -96,6 +96,22 @@ function writeConfig(databaseId) {
   return `${workerDir}${GENERATED_CONFIG}`;
 }
 
+async function pageAnswers(url, attempts = 8, pauseMs = 4000) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await fetch(`${url}/`, { headers: { 'Cache-Control': 'no-cache' } });
+      if (response.ok) {
+        const body = await response.text();
+        if (body.includes('ZEUS LITE')) return true;
+      }
+    } catch {
+      /* not up yet */
+    }
+    await new Promise((resolve) => setTimeout(resolve, pauseMs));
+  }
+  return false;
+}
+
 async function main() {
   const { accountId, token } = credentials();
   if (!dryRun && (!accountId || !token)) {
@@ -138,6 +154,23 @@ async function main() {
 
   const subdomain = await ensureSubdomain(accountId).catch(() => '');
   const url = subdomain ? `https://${WORKER_NAME}.${subdomain}.workers.dev` : '';
+
+  // A Worker whose first deployment is broken answers "Worker threw exception" to everything and there is nothing
+  // to debug inside it; a fresh script of the same code starts fine. So: check, and recreate once if needed.
+  if (url) {
+    let healthy = await pageAnswers(url);
+    if (!healthy) {
+      console.log('     the new deployment answers nothing; recreating the Worker once');
+      const { token } = credentials();
+      await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/services/${WORKER_NAME}?force=true`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+      wrangler(['deploy', '--config', GENERATED_CONFIG]);
+      healthy = await pageAnswers(url);
+    }
+    console.log(healthy ? '     the panel answers' : '     the panel still does not answer (see the workflow log)');
+  }
   console.log('');
   console.log('--------------------------------------------------------------------------');
   console.log('panel       ', url || '(see the address wrangler printed above)');
