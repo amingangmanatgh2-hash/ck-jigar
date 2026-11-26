@@ -9,7 +9,7 @@
  *   3. does the same panel work under a different worker name (so: the code, or this deployment)?
  */
 import { spawnSync } from 'node:child_process';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { credentials } from './env.mjs';
@@ -64,13 +64,16 @@ async function main() {
   say('probe', `${probed.status} title="${titleOf(probed.body)}"`);
   say('probeDeployExit', probe.code);
 
-  // a worker with no imports at all
-  mkdirSync('/tmp/hello', { recursive: true });
-  writeFileSync('/tmp/hello/index.js', 'export default { fetch() { return new Response("hello"); } };\n');
-  writeFileSync('/tmp/hello/wrangler.jsonc', '{"name":"zeus-hello","main":"index.js","compatibility_date":"2025-09-01"}\n');
-  const hello = wrangler(['deploy', '--config', '/tmp/hello/wrangler.jsonc'], '/tmp/hello');
-  const helloStatus = await statusOf('https://zeus-hello.amin-ck.workers.dev/');
-  say('hello', `${helloStatus.status} title="${titleOf(helloStatus.body)}" exit ${hello.code} ${hello.out.slice(-120)}`);
+  // the same panel without the database binding: is the binding what stops the isolate from starting?
+  const generated = JSON.parse(readFileSync(`${workerDir}wrangler.generated.jsonc`, 'utf8'));
+  say('d1', JSON.stringify(generated.d1_databases ?? []));
+  const without = { ...generated, name: 'zeus-nodb' };
+  delete without.d1_databases;
+  writeFileSync(`${workerDir}wrangler.nodb.jsonc`, JSON.stringify(without, null, 2));
+  const nodb = wrangler(['deploy', '--config', 'wrangler.nodb.jsonc']);
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+  const nodbStatus = await statusOf('https://zeus-nodb.amin-ck.workers.dev/?debug=1');
+  say('noDatabase', `${nodbStatus.status} title="${titleOf(nodbStatus.body)}" exit ${nodb.code}`);
 
   console.log(`::error title=Diagnose::${notes.join(' || ')}`);
 }
