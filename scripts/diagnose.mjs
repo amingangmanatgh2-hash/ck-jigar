@@ -56,6 +56,17 @@ async function main() {
   const plain = await statusOf('https://zeus-panel.amin-ck.workers.dev/');
   say('panelNoDebug', `${plain.status} title="${titleOf(plain.body)}"`);
 
+  try {
+    const bust = await fetch(`https://zeus-panel.amin-ck.workers.dev/?r=${Math.random().toString(36).slice(2)}`, {
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+    const text = (await bust.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+    const header = ['cf-cache-status', 'server', 'cf-ray', 'content-type'].map((h) => `${h}=${bust.headers.get(h)}`).join(' ');
+    say('freshUrl', `${bust.status} ${header} text="${text}"`);
+  } catch (err) {
+    say('freshUrl', String(err.message ?? err));
+  }
+
   const settingsOf = async (name) => {
     const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${name}/settings`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -68,14 +79,17 @@ async function main() {
 
   // is the database itself reachable?
   try {
-    const db = (databasesList.result ?? []).find((entry) => entry.name === 'zeus-db');
+    const dbs = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database?per_page=100`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then((r) => r.json());
+    const db = (dbs.result ?? []).find((entry) => entry.name === 'zeus-db');
     const id = db?.uuid ?? db?.id;
     const query = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${id}/query`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ sql: 'SELECT COUNT(*) AS users FROM users' }),
     }).then((response) => response.json());
-    say('d1', JSON.stringify(query).slice(0, 220));
+    say('d1', `${db?.num_tables ?? '?'} tables | ${JSON.stringify(query).slice(0, 200)}`);
   } catch (err) {
     say('d1', String(err.message ?? err));
   }
