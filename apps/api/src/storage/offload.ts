@@ -4,7 +4,7 @@ import type { Env } from '../env';
 import { sha256Hex } from '../lib/crypto';
 import { clipForLog } from '../lib/text';
 import { DriveError, driveConfig, driveFor, md5Hex, type DriveStore } from './drive';
-import { FileStore, purgeBlobs, type StoredFile } from './file-store';
+import { FileStore, filesConnected, purgeBlobs, type StoredFile } from './file-store';
 import { allState, credentialFingerprint, driveAllowed, getState, recordDriveFailure, recordDriveOk, setState } from './state';
 
 const DAY = 86_400_000;
@@ -68,11 +68,13 @@ async function ensureFolder(env: Env, drive: DriveStore): Promise<string> {
 
 /** Moves one file from R2 to Drive. The R2 copy is deleted only after the Drive copy has been verified AND recorded. */
 async function moveToDrive(env: Env, drive: DriveStore, folderId: string, row: CandidateRow): Promise<'moved' | 'skipped'> {
+  const bucket = env.FILES;
+  if (!bucket) return 'skipped'; // no hot tier here, so nothing to move out of it (offloadFiles does not even get this far)
   const claim = await env.DB.prepare(`UPDATE files SET tier = 'moving', tier_changed_at = ? WHERE id = ? AND tier = 'r2' AND deleted_at IS NULL`).bind(Date.now(), row.id).run();
   if (!claim.meta.changes) return 'skipped'; // another run took it, or it was deleted
   let uploadedId: string | null = null;
   try {
-    const obj = await env.FILES.get(row.r2_key);
+    const obj = await bucket.get(row.r2_key);
     if (!obj) {
       console.error('offload: the R2 object is missing', row.id);
       await env.DB.prepare(`UPDATE files SET tier = 'r2', tier_changed_at = NULL WHERE id = ? AND tier = 'moving'`).bind(row.id).run();
@@ -87,7 +89,7 @@ async function moveToDrive(env: Env, drive: DriveStore, folderId: string, row: C
     const done = await env.DB.prepare(`UPDATE files SET tier = 'drive', drive_id = ?, tier_changed_at = ? WHERE id = ? AND tier = 'moving' AND deleted_at IS NULL`).bind(info.id, Date.now(), row.id).run();
     if (!done.meta.changes) throw new DriveError('failed', `${row.id} changed while it was being moved`); // deleted meanwhile: the copy below is removed again
     uploadedId = null; // recorded: from here on the purge sweep owns the Drive copy
-    await env.FILES.delete(row.r2_key).catch((err) => console.error('offload: R2 delete failed', row.id, clipForLog(err)));
+    await bucket.delete(row.r2_key).catch((err) => console.error('offload: R2 delete failed', row.id, clipForLog(err)));
     return 'moved';
   } catch (err) {
     await env.DB.prepare(`UPDATE files SET tier = 'r2', tier_changed_at = NULL WHERE id = ? AND tier = 'moving' AND deleted_at IS NULL`).bind(row.id).run().catch(() => undefined);
@@ -157,6 +159,8 @@ export async function offloadFiles(env: Env, opts: { now?: number; force?: boole
   const store = new FileStore(env, opts.drive);
   const purged = await purgeDeleted(env, now, store).catch((err) => (console.error('purge failed', clipForLog(err)), 0));
 
+  // no bucket: there is no hot tier to move anything out of
+  if (!filesConnected(env)) return { ...emptyReport('nothing_to_do'), purged };
   if (!driveConfig(env) && !opts.drive) return { ...emptyReport('not_configured'), purged };
   const allowed = await driveAllowed(env, now);
   if (!allowed.allowed && !opts.drive) return { ...emptyReport(allowed.health === 'quota_full' ? 'quota_full' : 'auth_failed'), purged };
@@ -236,9 +240,9 @@ export async function storageStatus(env: Env, opts: { check?: boolean; drive?: D
   const effective: DriveHealth = stale ? 'ok' : health;
   const overLimit = hot.bytes > policy.r2SoftLimitBytes;
   const attention: StorageAttention =
-    effective === 'auth_failed' ? 'drive_auth_failed' : effective === 'quota_full' ? 'drive_full' : effective === 'degraded' ? 'drive_degraded' : !configured && hot.bytes > policy.r2SoftLimitBytes * 0.8 ? 'r2_filling_without_drive' : null;
+    !filesConnected(env) ? 'r2_not_connected' : effective === 'auth_failed' ? 'drive_auth_failed' : effective === 'quota_full' ? 'drive_full' : effective === 'degraded' ? 'drive_degraded' : !configured && hot.bytes > policy.r2SoftLimitBytes * 0.8 ? 'r2_filling_without_drive' : null;
   return {
-    hot: { files: hot.files, bytes: hot.bytes, softLimitBytes: policy.r2SoftLimitBytes, overLimit },
+    hot: { files: hot.files, bytes: hot.bytes, softLimitBytes: policy.r2SoftLimitBytes, overLimit, connected: filesConnected(env) },
     cold: {
       configured,
       health: effective,

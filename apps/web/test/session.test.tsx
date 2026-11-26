@@ -2,9 +2,10 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, getToken, setToken } from '../src/lib/api';
-import { Auth, Convs } from '../src/lib/endpoints';
+import { Auth, Convs, Server } from '../src/lib/endpoints';
 import { setLocale, translate } from '../src/lib/i18n';
 import { OfflineScreen } from '../src/screens/Offline';
+import { capabilitiesStore, resetCapabilities } from '../src/state/capabilities';
 import { outbox } from '../src/state/outbox';
 import { bootstrapSession, sessionStore, signOut } from '../src/state/session';
 
@@ -28,13 +29,14 @@ vi.mock('../src/lib/endpointPool', () => {
 });
 vi.mock('../src/lib/endpoints', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/lib/endpoints')>();
-  return { ...actual, Auth: { ...actual.Auth, me: vi.fn(), logout: vi.fn() }, Convs: { ...actual.Convs, send: vi.fn(), list: vi.fn(async () => ({ conversations: [] })) } };
+  return { ...actual, Auth: { ...actual.Auth, me: vi.fn(), logout: vi.fn() }, Convs: { ...actual.Convs, send: vi.fn(), list: vi.fn(async () => ({ conversations: [] })) }, Server: { health: vi.fn() } };
 });
 
 const T = (key: Parameters<typeof translate>[1]) => translate('en', key);
 const me = { user: { id: 'u1', username: 'amin', displayName: 'Amin', kind: 'human', role: 'member', locale: 'en' } as never };
 const authMe = vi.mocked(Auth.me);
 const send = vi.mocked(Convs.send);
+const health = vi.mocked(Server.health);
 const NETWORK = () => new ApiError(0, 'NETWORK', 'down');
 const OUTBOX_KEY = 'aminchat.outbox.u1';
 const queuedEntry = { clientId: 'client-id-00000001', conversationId: 'c1', body: 'kept while offline', queuedAt: 1, attempts: 0, state: 'pending' };
@@ -45,6 +47,8 @@ describe('session with an unreliable network', () => {
     authMe.mockReset();
     send.mockReset();
     vi.mocked(Auth.logout).mockReset().mockResolvedValue({ ok: true } as never);
+    health.mockReset().mockResolvedValue({ ok: true, service: 'amin-chat', time: 1, environment: 'test', endpoints: [], ai: { 'workers-ai': true, groq: false }, storage: { files: true } });
+    resetCapabilities();
     rt.start.mockClear();
     rt.stop.mockClear();
     sessionStore.set({ status: 'loading', user: null });
@@ -109,6 +113,51 @@ describe('session with an unreliable network', () => {
     await bootstrapSession();
     expect(sessionStore.get()).toMatchObject({ status: 'anonymous', expired: true });
     expect(localStorage.getItem(OUTBOX_KEY)).toContain('kept while offline');
+  });
+});
+
+describe('what the server can keep is learned when a session starts', () => {
+  beforeEach(() => {
+    setLocale('en');
+    authMe.mockReset().mockResolvedValue(me as never);
+    vi.mocked(Auth.logout).mockReset().mockResolvedValue({ ok: true } as never);
+    health.mockReset();
+    resetCapabilities();
+    sessionStore.set({ status: 'loading', user: null });
+    outbox.unbind();
+    setToken('tok');
+  });
+  afterEach(() => outbox.unbind());
+
+  it('a server without file storage switches attaching off for this session, and signing out forgets it (the next sign-in may be elsewhere)', async () => {
+    health.mockResolvedValue({ ok: true, service: 'amin-chat', time: 1, environment: 'production', endpoints: [], ai: { 'workers-ai': true, groq: true }, storage: { files: false } });
+    await bootstrapSession();
+    expect(sessionStore.get().status).toBe('authenticated');
+    await waitFor(() => expect(capabilitiesStore.get()).toEqual({ files: false, known: true }));
+    expect(health).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await signOut();
+    });
+    expect(capabilitiesStore.get()).toEqual({ files: true, known: false });
+  });
+
+  it('a server that cannot be asked, or that predates the field, leaves attaching on', async () => {
+    health.mockRejectedValue(new ApiError(0, 'NETWORK', 'down'));
+    await bootstrapSession();
+    expect(sessionStore.get().status).toBe('authenticated');
+    await waitFor(() => expect(health).toHaveBeenCalled());
+    expect(capabilitiesStore.get().files).toBe(true);
+    resetCapabilities();
+    health.mockResolvedValue({ ok: true, service: 'amin-chat', time: 1, environment: 'test', endpoints: [] } as never);
+    await bootstrapSession();
+    await waitFor(() => expect(capabilitiesStore.get()).toEqual({ files: true, known: true }));
+  });
+
+  it('nothing is asked while nobody is signed in', async () => {
+    localStorage.clear();
+    await bootstrapSession();
+    expect(sessionStore.get().status).toBe('anonymous');
+    expect(health).not.toHaveBeenCalled();
   });
 });
 

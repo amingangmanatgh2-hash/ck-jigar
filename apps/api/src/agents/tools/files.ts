@@ -9,7 +9,7 @@ import type { FileRow } from '../../services/dto';
 import { loadHealth } from '../../ai/health';
 import { rolePriority } from '../../ai/models';
 import { ToolError, clip, type ToolDef } from './types';
-import { fileStore } from '../../storage/file-store';
+import { fileStore, filesConnected } from '../../storage/file-store';
 
 const fileList = z.object({
   kind: z.enum(['image', 'audio', 'video', 'document', 'text', 'archive', 'other']).optional(),
@@ -119,6 +119,8 @@ export const imageGenerateTool: ToolDef<z.infer<typeof imageGenerate>> = {
   schema: imageGenerate,
   async available(env) {
     if (!env.AI) return { ok: false, reason: 'Workers AI is not connected' };
+    // the picture is kept as a file: without file storage it would be paid for and then lost
+    if (!filesConnected(env)) return { ok: false, reason: 'File storage is not connected, so a generated image could not be kept' };
     const health = await loadHealth(env);
     const ok = rolePriority('image').some((m) => health.get(m.id)?.status === 'available');
     return ok ? { ok: true } : { ok: false, reason: 'No image model has been verified as available' };

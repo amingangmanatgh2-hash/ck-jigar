@@ -6,6 +6,7 @@ import { pool } from '../lib/endpointPool';
 import { realtime } from '../lib/realtime';
 import { attachStreamFeed, streams } from '../lib/streams';
 import { createStore, useStore } from '../lib/store';
+import { refreshCapabilities, resetCapabilities } from './capabilities';
 import { resetConversations } from './conversations';
 import { outbox } from './outbox';
 
@@ -59,6 +60,7 @@ function enter(user: SelfDto): void {
   outbox.bind(user.id);
   pool.start();
   realtime.start();
+  void refreshCapabilities(); // does this server keep files? (a deployment without R2 does not)
 }
 
 function leave(expired = false): void {
@@ -72,6 +74,7 @@ function leave(expired = false): void {
   streams.clear();
   setToken(null);
   resetConversations();
+  resetCapabilities(); // the next sign-in may be to another server
   sessionStore.set({ status: 'anonymous', user: null, expired });
 }
 

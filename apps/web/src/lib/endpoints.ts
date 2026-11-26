@@ -1,4 +1,4 @@
-import type { AgentDto, AiTriggerResult, ApprovalDto, AttachmentDto, AuthResponse, ConversationDto, E2eePayload, MemoryItemDto, MemorySettingsDto, MemorySuggestionDto, MessageDto, ModelsResponse, OffloadReportDto, PollDto, ProjectDto, ReminderDto, RunDto, SearchHitDto, SelfDto, SessionDto, StorageStatusDto, ThreadDto, TodoDto, UsageSummaryDto, UserDto } from '@aminchat/shared';
+import type { AgentDto, AiTriggerResult, ApprovalDto, AttachmentDto, AuthResponse, ConversationDto, HealthDto, E2eePayload, MemoryItemDto, MemorySettingsDto, MemorySuggestionDto, MessageDto, ModelsResponse, OffloadReportDto, PollDto, ProjectDto, ReminderDto, RunDto, SearchHitDto, SelfDto, SessionDto, StorageStatusDto, ThreadDto, TodoDto, UsageSummaryDto, UserDto } from '@aminchat/shared';
 import { http, request } from './api';
 
 export interface SharedInput {
@@ -144,4 +144,9 @@ export const Admin = {
   overview: (days = 7) => http.get<AdminOverview>('/api/admin/overview', { days }),
   userUsage: (id: string) => http.get<UsageSummaryDto>(`/api/admin/users/${id}/usage`),
   setQuota: (id: string, b: { dailyTokens: number | null; dailyRequests: number | null; monthlyTokens: number | null }) => http.put<{ quota: QuotaDto }>(`/api/admin/users/${id}/quota`, b),
+};
+
+/** The public health document: besides "is it up" it says what this deployment can do (no file storage without R2). */
+export const Server = {
+  health: () => http.get<HealthDto>('/api/health'),
 };

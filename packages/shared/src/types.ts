@@ -424,6 +424,12 @@ export interface HealthDto {
    * logging in; whether a model really answers is what the signed-in availability check ("Models & usage") finds out.
    */
   ai: Record<ModelProviderId, boolean>;
+  /**
+   * What this deployment can store. `files` is false when it runs without the R2 bucket (an account that has not switched R2 on is deployed
+   * without it): chat, AI, agents, memory and tasks work, but nothing can be attached or opened as a file. Clients use it to disable
+   * attaching instead of offering something that fails; a server that does not send it (an older one) is treated as having files.
+   */
+  storage: { files: boolean };
 }
 
 export type RealtimeEvent =
@@ -450,10 +456,11 @@ export interface ApiErrorBody {
 /** Health of the connection to Google Drive, the cold file tier. */
 export type DriveHealth = 'not_configured' | 'ok' | 'degraded' | 'auth_failed' | 'quota_full';
 /** The one thing an administrator should look at first. */
-export type StorageAttention = 'drive_auth_failed' | 'drive_full' | 'drive_degraded' | 'r2_filling_without_drive' | null;
+export type StorageAttention = 'r2_not_connected' | 'drive_auth_failed' | 'drive_full' | 'drive_degraded' | 'r2_filling_without_drive' | null;
 
 export interface StorageStatusDto {
-  hot: { files: number; bytes: number; softLimitBytes: number; overLimit: boolean };
+  /** `connected` is false when the deployment has no R2 bucket: nothing can be stored there. */
+  hot: { files: number; bytes: number; softLimitBytes: number; overLimit: boolean; connected: boolean };
   cold: {
     configured: boolean;
     health: DriveHealth;

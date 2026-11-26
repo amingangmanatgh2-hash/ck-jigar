@@ -3,7 +3,7 @@ import type { Env } from '../env';
 import { sha256Hex } from '../lib/crypto';
 import { ID_PREFIX, newId } from '../lib/ids';
 import { badRequest, tooLarge, unsupportedMedia } from '../lib/errors';
-import { fileStore } from '../storage/file-store';
+import { fileStore, requireFileStorage } from '../storage/file-store';
 import { fileToDto, type FileRow } from './dto';
 
 interface TypeRule {
@@ -147,6 +147,7 @@ export async function storeFile(
   bytes: Uint8Array,
   opts: { source?: 'upload' | 'ai'; forceMime?: string; kind?: FileKind } = {},
 ): Promise<FileRow> {
+  requireFileStorage(env); // before anything is validated, hashed or paid for
   const v = opts.source === 'ai' ? { name: sanitizeFileName(name), mime: opts.forceMime ?? 'application/octet-stream', kind: opts.kind ?? 'other' } : validateUpload(name, bytes);
   const id = newId(ID_PREFIX.file);
   const key = `u/${ownerId}/${id}`;
@@ -161,7 +162,7 @@ export async function storeFile(
       .bind(id, ownerId, key, v.name, v.mime, bytes.byteLength, sha, v.kind, opts.source ?? 'upload', now)
       .run();
   } catch (err) {
-    await env.FILES.delete(key).catch(() => undefined);
+    await env.FILES?.delete(key).catch(() => undefined);
     throw err;
   }
   return {

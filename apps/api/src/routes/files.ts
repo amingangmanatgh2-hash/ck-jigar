@@ -9,7 +9,7 @@ import { userLimit } from '../middleware/rate-limit';
 import { getMember } from '../services/conversations';
 import { fileToDto, type FileRow } from '../services/dto';
 import { storeFile, TYPE_RULES, extensionOf } from '../services/files';
-import { fileStore, purgeBlobs } from '../storage/file-store';
+import { fileStore, purgeBlobs, requireFileStorage } from '../storage/file-store';
 
 export const fileRoutes = new Hono<AppEnv>();
 fileRoutes.use('*', requireAuth, userLimit('api'));
@@ -19,6 +19,7 @@ fileRoutes.use('*', requireAuth, userLimit('api'));
  * Content is checked against an extension allow-list AND magic bytes; the client-supplied Content-Type is never trusted.
  */
 fileRoutes.post('/', userLimit('upload'), async (c) => {
+  requireFileStorage(c.env); // a deployment without R2 refuses before reading a (possibly large) body
   const user = c.get('user');
   const declared = Number(c.req.header('Content-Length') ?? '0');
   if (declared > LIMITS.fileMaxBytes + 64 * 1024) throw tooLarge(`Files can be at most ${Math.round(LIMITS.fileMaxBytes / 1048576)} MB`);
@@ -27,7 +28,13 @@ fileRoutes.post('/', userLimit('upload'), async (c) => {
   let bytes: Uint8Array;
   const type = c.req.header('Content-Type') ?? '';
   if (type.startsWith('multipart/form-data')) {
-    const form = await c.req.formData();
+    let form: FormData;
+    try {
+      form = await c.req.formData();
+    } catch {
+      // a body that is not valid multipart is the client's mistake, not a crash of ours
+      throw badRequest('The upload could not be read: send multipart/form-data with a "file" field, or a raw body with an X-File-Name header', undefined, 'INVALID_UPLOAD');
+    }
     const file = form.get('file');
     if (!(file instanceof File)) throw badRequest('Missing "file" field', undefined, 'MISSING_FILE');
     name = file.name;

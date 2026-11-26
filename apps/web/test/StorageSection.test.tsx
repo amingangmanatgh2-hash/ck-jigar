@@ -53,6 +53,27 @@ describe('StorageSection (administrators)', () => {
     expect(screen.getByText(T('storage.detail'))).toBeInTheDocument();
   });
 
+  it('a server without the R2 bucket says so first, in plain words, and offers nothing that moves files', async () => {
+    storage.mockResolvedValue(storageStatus({ attention: 'r2_not_connected', hot: { files: 0, bytes: 0, softLimitBytes: 8 * 1024 ** 3, overLimit: false, connected: false } }));
+    render(<StorageSection />);
+    const banner = await screen.findByTestId('storage-attention');
+    expect(banner).toHaveAttribute('data-attention', 'r2_not_connected');
+    expect(banner).toHaveTextContent(/not connected/);
+    expect(banner).toHaveTextContent(/run the deployment again/);
+    expect(banner).toHaveClass('banner-warn'); // not an error: the rest of the service works
+    expect(screen.getByRole('button', { name: T('storage.offload') })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: T('storage.offload') }));
+    expect(offload).not.toHaveBeenCalled();
+  });
+
+  it('with Drive connected but no bucket the offload button stays off too (there is no hot tier to move anything out of)', async () => {
+    storage.mockResolvedValue(storageStatus({ attention: 'r2_not_connected', hot: { files: 0, bytes: 0, softLimitBytes: 8 * 1024 ** 3, overLimit: false, connected: false }, cold: { configured: true, health: 'ok' } }));
+    render(<StorageSection />);
+    await screen.findByTestId('storage-attention');
+    expect(screen.getByRole('button', { name: T('storage.offload') })).toBeDisabled();
+    expect(screen.getByRole('button', { name: T('storage.check') })).toBeEnabled(); // Drive itself can still be tested
+  });
+
   it('is honest that without Drive nothing moves, and offers no buttons that cannot work', async () => {
     storage.mockResolvedValue(storageStatus({ attention: 'r2_filling_without_drive', cold: { configured: false, health: 'not_configured', files: 0, bytes: 0 } }));
     render(<StorageSection />);

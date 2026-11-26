@@ -17,6 +17,16 @@ export interface OpenedFile {
   size: number;
 }
 
+/** Is a file bucket bound to this deployment? A deployment without R2 runs without one (docs/deploy.md). */
+export const filesConnected = (env: Env): boolean => !!env.FILES;
+
+export const NOT_CONNECTED_MESSAGE = 'File storage is not connected on this server, so files cannot be sent or opened. The administrator can switch it on (docs/deploy.md).';
+
+/** Throws 503 FILE_STORAGE_NOT_CONNECTED when there is no bucket: call it BEFORE reading an upload or spending anything on a file. */
+export function requireFileStorage(env: Env): void {
+  if (!filesConnected(env)) throw unavailable(NOT_CONNECTED_MESSAGE, 'FILE_STORAGE_NOT_CONNECTED');
+}
+
 /**
  * One place that knows where file bytes live.
  *   hot  tier: R2 (every upload lands here)
@@ -34,14 +44,20 @@ export class FileStore {
     return this.driveOverride === undefined ? driveFor(this.env) : this.driveOverride;
   }
 
+  /** The hot tier, or a clear refusal when this deployment has none. */
+  private bucket(): R2Bucket {
+    requireFileStorage(this.env);
+    return this.env.FILES as R2Bucket;
+  }
+
   async put(key: string, bytes: Uint8Array, meta: { mime: string; owner: string }): Promise<void> {
-    await this.env.FILES.put(key, bytes, { httpMetadata: { contentType: meta.mime }, customMetadata: { owner: meta.owner } });
+    await this.bucket().put(key, bytes, { httpMetadata: { contentType: meta.mime }, customMetadata: { owner: meta.owner } });
   }
 
   /** Streams the content. null = the bytes are gone. Throws FILE_STORAGE_UNAVAILABLE when a cold file cannot be fetched right now. */
   async open(f: StoredFile): Promise<OpenedFile | null> {
     if (f.tier !== 'drive') {
-      const obj = await this.env.FILES.get(f.r2_key);
+      const obj = await this.bucket().get(f.r2_key);
       if (obj) return { body: obj.body, size: obj.size };
       // The offload job may have finished between our read of the row and now: look again before giving up.
       const fresh = await first<StoredFile>(this.env.DB.prepare('SELECT id, r2_key, tier, drive_id FROM files WHERE id = ?').bind(f.id));
@@ -77,7 +93,8 @@ export class FileStore {
 
   async exists(f: StoredFile): Promise<boolean> {
     if (f.tier !== 'drive') {
-      if (await this.env.FILES.head(f.r2_key)) return true;
+      // without a bucket nothing is kept in the hot tier: the bytes can only be (or have become) cold
+      if (this.env.FILES && (await this.env.FILES.head(f.r2_key))) return true;
       const fresh = await first<StoredFile>(this.env.DB.prepare('SELECT id, r2_key, tier, drive_id FROM files WHERE id = ?').bind(f.id));
       if (!fresh || fresh.tier !== 'drive') return false;
       f = fresh;
@@ -95,9 +112,10 @@ export class FileStore {
 
   /** Deletes the bytes wherever they are. Resolves true when nothing is left behind, false when a retry is needed. */
   async remove(f: StoredFile): Promise<boolean> {
-    let clean = true;
+    // no bucket: the bytes cannot be shown to be gone, so the sweep keeps this row and tries again once there is one
+    let clean = !!this.env.FILES;
     try {
-      await this.env.FILES.delete(f.r2_key);
+      await this.env.FILES?.delete(f.r2_key);
     } catch (err) {
       console.error('r2 delete failed', f.id, String((err as Error)?.message ?? err));
       clean = false;

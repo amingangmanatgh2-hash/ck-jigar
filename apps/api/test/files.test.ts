@@ -17,7 +17,7 @@ describe('files', () => {
     expect(res.status).toBe(201);
     const { file } = await json(res);
     expect(file).toMatchObject({ name: 'photo.png', mime: 'image/png', kind: 'image', size: PNG.length });
-    const stored = await env.FILES.get(`u/${u.id}/${file.id}`);
+    const stored = await env.FILES!.get(`u/${u.id}/${file.id}`);
     expect(stored).not.toBeNull();
 
     const dl = await api('GET', `/api/files/${file.id}`, { token: u.token });
@@ -76,7 +76,7 @@ describe('files', () => {
     const { file } = await json(await upload(a.token, 'gone.txt', new TextEncoder().encode('bye')));
     const { message } = await sendText(a, c, 'file', { fileIds: [file.id] });
     await api('DELETE', `/api/messages/${message.id}`, { token: a.token });
-    expect(await env.FILES.get(`u/${a.id}/${file.id}`)).toBeNull();
+    expect(await env.FILES!.get(`u/${a.id}/${file.id}`)).toBeNull();
     expect((await api('GET', `/api/files/${file.id}`, { token: a.token })).status).toBe(404);
   });
 

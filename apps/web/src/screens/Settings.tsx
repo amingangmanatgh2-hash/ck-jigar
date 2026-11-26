@@ -420,7 +420,7 @@ export function StorageSection() {
       {status && (
         <div className="stack">
           {status.attention && (
-            <p className={`banner ${status.attention === 'drive_degraded' || status.attention === 'r2_filling_without_drive' ? 'banner-warn' : 'banner-error'}`} role="alert" data-testid="storage-attention" data-attention={status.attention}>
+            <p className={`banner ${status.attention === 'drive_degraded' || status.attention === 'r2_filling_without_drive' || status.attention === 'r2_not_connected' ? 'banner-warn' : 'banner-error'}`} role="alert" data-testid="storage-attention" data-attention={status.attention}>
               {t(`storage.attention.${status.attention}`)}
             </p>
           )}
@@ -464,7 +464,7 @@ export function StorageSection() {
             <Button icon="refresh" busy={busy === 'check'} disabled={!status.cold.configured || busy !== null} onClick={() => void check()}>
               {t('storage.check')}
             </Button>
-            <Button variant="primary" busy={busy === 'offload'} disabled={!status.cold.configured || busy !== null} onClick={() => void offload()}>
+            <Button variant="primary" busy={busy === 'offload'} disabled={!status.cold.configured || !status.hot.connected || busy !== null} onClick={() => void offload()}>
               {t('storage.offload')}
             </Button>
           </div>

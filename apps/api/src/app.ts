@@ -12,6 +12,7 @@ import { cors, onError, requestContext } from './middleware/common';
 import type { AppEnv } from './middleware/auth';
 import { notFound } from './lib/errors';
 import { providerConnected } from './ai/providers';
+import { filesConnected } from './storage/file-store';
 
 export function buildApp() {
   const app = new Hono<AppEnv>();
@@ -27,6 +28,7 @@ export function buildApp() {
       environment: c.env.ENVIRONMENT,
       endpoints: parseEndpointList(c.env.PUBLIC_ENDPOINTS),
       ai: { 'workers-ai': providerConnected(c.env, 'workers-ai'), groq: providerConnected(c.env, 'groq') },
+      storage: { files: filesConnected(c.env) },
     } satisfies HealthDto),
   );
 

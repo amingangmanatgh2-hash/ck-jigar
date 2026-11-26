@@ -490,13 +490,27 @@ test('the workflow registers the address after the tests and before the deploy, 
   assert.match(stepOf(text, 'Tests first'), /\n {8}id: tests\n/);
   // what the preflight found about R2 reaches the deploy (which leaves the bucket out) and the report of the live address
   const handed = [...text.matchAll(/\n {10}AMIN_R2: \$\{\{ steps\.preflight\.outputs\.r2 \}\}\n/g)];
-  assert.equal(handed.length, 2, 'the deploy step and the address step');
+  assert.equal(handed.length, 3, 'the deploy step, the address step and the smoke check');
   assert.match(stepOf(text, 'Deploy (build'), /AMIN_R2: \$\{\{ steps\.preflight\.outputs\.r2 \}\}/);
   assert.match(stepOf(text, 'Address of the live service'), /AMIN_R2: \$\{\{ steps\.preflight\.outputs\.r2 \}\}/);
   assert.match(stepOf(text, 'Address of the live service'), /if \[ "\$AMIN_R2" = "off" \]; then/);
   assert.match(stepOf(text, 'Address of the live service'), /::warning title=File storage is off::/);
+  // the smoke check: waits long enough for a brand-new address, remembers why each attempt failed, and compares the bucket with the decision
+  const smoke = stepOf(text, 'Check that it answers like AMIN CHAT');
+  assert.match(smoke, /\n {8}id: smoke\n/);
+  assert.match(smoke, /AMIN_R2: \$\{\{ steps\.preflight\.outputs\.r2 \}\}/);
+  assert.match(smoke, /for i in \$\(seq 1 30\); do/);
+  assert.match(smoke, /curl -sS -o health\.json -w '%\{http_code\}' --max-time 10 /);
+  assert.match(smoke, /LAST="HTTP \$CODE \$\(head -c 160 curl\.err/);
+  assert.match(smoke, /::error title=The service did not answer::.*\(last: \$LAST\)\. The Worker IS published/);
+  assert.match(smoke, /FILES=\$\(jq -r '\.storage\.files' health\.json/);
+  assert.match(smoke, /if \[ "\$AMIN_R2" = "off" \] && \[ "\$FILES" = "true" \]; then echo "::warning title=File storage::/);
+  assert.match(smoke, /if \[ "\$AMIN_R2" != "off" \] && \[ "\$FILES" = "false" \]; then echo "::warning title=File storage::/);
+  assert.match(smoke, /\| File storage \(R2\) \| \$FILES \|/);
   // the report of failures: "Tests failed" only when the tests failed; the account step has its own message
   const wrong = stepOf(text, 'What went wrong');
+  assert.match(wrong, /DEPLOY_OUTCOME: \$\{\{ steps\.deploy\.outcome \}\}/);
+  assert.match(wrong, /if \[ "\$DEPLOY_OUTCOME" = "failure" \] && \[ -s deploy\.log \]; then say "Deploy failed"/, 'a failed smoke check is not "Deploy failed"');
   assert.match(wrong, /TESTS_OUTCOME: \$\{\{ steps\.tests\.outcome \}\}/);
   assert.match(wrong, /\[ "\$TESTS_OUTCOME" = "failure" \] && \[ -s test\.log \] && ! \[ -s deploy\.log \]; then say "Tests failed"/);
   assert.match(wrong, /\[ -s account\.log \] && ! \[ -s deploy\.log \] && \[ "\$TESTS_OUTCOME" != "failure" \]; then say "Nothing was published"/);

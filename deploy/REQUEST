@@ -2,4 +2,4 @@ deploy
 # Line 1 is "check" (run the plan and the tests only; nothing is published) or "deploy" (publish to Cloudflare).
 # A commit that changes this file, on Main or on an arena/* branch, starts the workflow "Deploy to Cloudflare" (.github/workflows/deploy.yml).
 # Line 4 and below are free notes: change them to start another run.
-note: ninth attempt. Token is right now. R2 is not switched on in the account (it needs a card) and there is no workers.dev address: this run registers the address itself and goes live WITHOUT file storage.
+note: tenth attempt. The service is already live (https://amin-chat.amin-ck.workers.dev, without R2). This run publishes the app that says so honestly: attach is disabled with the reason, and the run reports the smoke check properly.

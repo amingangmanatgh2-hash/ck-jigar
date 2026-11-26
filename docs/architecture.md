@@ -142,7 +142,7 @@ The protection is structural (tool lists, approvals, access policy, bounded cont
 
 ## Files and storage
 
-Uploads (≤ 25 MiB; the AI pipeline processes ≤ 12 MiB) go to **R2**. A cron job moves files older than 7 days or at least 5 MiB to **Google Drive** after verifying size and hash, so the Cloudflare bucket does not fill up; reads transparently fetch from Drive. `files.tier` is `r2 | moving | drive`. Details and failure modes: [storage-drive.md](storage-drive.md).
+Uploads (≤ 25 MiB; the AI pipeline processes ≤ 12 MiB) go to **R2**. R2 is **optional**: an account that has not switched it on (it needs a payment method) is deployed without the bucket, and the Worker then runs with no `FILES` binding. `FileStore` is the one place that touches the bucket and answers `503 FILE_STORAGE_NOT_CONNECTED` without it; `/api/health` reports `storage.files`, the web app disables attaching, the offload job does nothing, and the image tool is not offered (its result could not be kept). Everything else is unaffected. A cron job moves files older than 7 days or at least 5 MiB to **Google Drive** after verifying size and hash, so the Cloudflare bucket does not fill up; reads transparently fetch from Drive. `files.tier` is `r2 | moving | drive`. Details and failure modes: [storage-drive.md](storage-drive.md).
 
 ## Cron (every minute, `src/cron.ts`)
 

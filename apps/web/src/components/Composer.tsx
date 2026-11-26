@@ -4,6 +4,7 @@ import { canRecord, startRecording, type Recording } from '../lib/audio';
 import { Ai, Files } from '../lib/endpoints';
 import { fmtBytes } from '../lib/format';
 import { useErrorText, useLocale, useT } from '../lib/i18n';
+import { capabilitiesStore, useFilesAvailable } from '../state/capabilities';
 import { toast } from '../state/toast';
 import { Icon } from './Icon';
 import { IconButton } from './ui';
@@ -28,6 +29,11 @@ export function useAttachments() {
   const add = useCallback(
     (list: FileList | File[]) => {
       const files = [...list];
+      // a server without file storage: say why instead of starting uploads that can only fail (paste and drop come through here too)
+      if (!capabilitiesStore.get().files) {
+        toast(t('attach.unavailable'), 'error');
+        return;
+      }
       const room = LIMITS.attachmentsPerMessage - itemsRef.current.length;
       if (files.length > room) toast(t('attach.tooMany', { n: LIMITS.attachmentsPerMessage }), 'error');
       for (const file of files.slice(0, Math.max(0, room))) {
@@ -162,6 +168,7 @@ export function Composer(p: Props) {
   const own = useRef<HTMLTextAreaElement>(null);
   const ta = p.textareaRef ?? own;
   const files = useAttachments();
+  const filesAvailable = useFilesAvailable();
   const fileInput = useRef<HTMLInputElement>(null);
   const appendText = useCallback((extra: string) => setText((cur) => (cur ? `${cur.replace(/\s+$/, '')} ${extra}` : extra)), []);
   const voice = useVoice(appendText);
@@ -279,7 +286,12 @@ export function Composer(p: Props) {
                 e.target.value = '';
               }}
             />
-            <IconButton icon="attach" label={t('attach.add')} disabled={p.disabled || files.items.length >= LIMITS.attachmentsPerMessage} onClick={() => fileInput.current?.click()} />
+            {filesAvailable ? (
+              <IconButton icon="attach" label={t('attach.add')} disabled={p.disabled || files.items.length >= LIMITS.attachmentsPerMessage} onClick={() => fileInput.current?.click()} />
+            ) : (
+              // looks disabled, but stays tappable: a touch screen has no tooltip, so the reason is shown as a message
+              <IconButton icon="attach" label={t('attach.unavailable')} aria-disabled="true" data-testid="attach-unavailable" className="needs-setup" onClick={() => toast(t('attach.unavailable'), 'info')} />
+            )}
           </>
         )}
         <textarea

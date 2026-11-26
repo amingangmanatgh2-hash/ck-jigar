@@ -191,6 +191,7 @@ export const fa: Record<keyof typeof en, string> = {
   'attach.remove': 'برداشتن {name}',
   'attach.tooLarge': 'اندازه‌ی «{name}» از {mb} مگابایت بیشتر است',
   'attach.tooMany': 'حداکثر {n} فایل می‌توانید پیوست کنید',
+  'attach.unavailable': 'ذخیره‌سازی فایل روی این سرور وصل نیست، پس پیوست فایل ممکن نیست.',
   'voice.start': 'ورودی صوتی',
   'voice.stop': 'توقف ضبط',
   'voice.recording': 'در حال ضبط…',
@@ -487,6 +488,7 @@ export const fa: Record<keyof typeof en, string> = {
   'storage.attention.drive_auth_failed': 'Google Drive توکن ذخیره‌شده را نپذیرفت (باطل یا منقضی شده است؛ اگر این اتفاق هر هفته تکرار می‌شود، صفحهٔ رضایت Google هنوز در حالت «Testing» است و باید «In production» شود). فایل‌های تازه در R2 می‌مانند و ممکن است فضای آن پر شود. با دستور «npm run drive:token» توکن جدید بگیرید و مقدار GOOGLE_REFRESH_TOKEN را عوض کنید.',
   'storage.attention.drive_full': 'فضای Google Drive متصل پر است. فایل‌های تازه تا آزاد شدن فضا در R2 می‌مانند؛ خواندن و حذف فایل‌ها همچنان کار می‌کند.',
   'storage.attention.drive_degraded': 'Google Drive چند بار پشت‌سرهم موقتاً خطا داده است. کار به‌طور خودکار دوباره تلاش می‌کند.',
+  'storage.attention.r2_not_connected': 'مخزن فایل R2 وصل نیست: این سرور بدون ذخیره‌سازی فایل اجرا می‌شود و ارسال فایل و عکس ممکن نیست. R2 را در Cloudflare روشن کنید (روش پرداخت می‌خواهد؛ سهمیهٔ رایگان ماهانه کافی است) و دوباره deploy کنید (docs/deploy.md).',
   'storage.attention.r2_filling_without_drive': 'فضای R2 دارد پر می‌شود و Google Drive وصل نیست. برای بیرون بردن فایل‌های قدیمی از Cloudflare، Drive را وصل کنید (docs/storage-drive.md).',
   'storage.policy': 'فایل‌ها بعد از {days} روز، یا اگر بزرگ‌تر از {size} باشند (پس از {minutes} دقیقه نگه‌داری)، به Drive می‌روند.',
   'storage.account': 'حساب Google: {used} از {limit} پر است',
@@ -505,6 +507,8 @@ export const fa: Record<keyof typeof en, string> = {
   'storage.skipped.auth_failed': 'مجوز Google Drive از دست رفته است. اول توکن را درست کنید.',
   'storage.skipped.quota_full': 'فضای Google Drive پر است.',
   'storage.skipped.throttled': 'کار همین چند لحظه پیش اجرا شد.',
+  'err.INVALID_UPLOAD': 'فایل خوانده نشد. لطفاً دوباره آن را انتخاب کنید.',
+  'err.FILE_STORAGE_NOT_CONNECTED': 'ذخیره‌سازی فایل روی این سرور وصل نیست و فایل‌ها نه فرستاده می‌شوند نه باز.',
   'err.FILE_STORAGE_UNAVAILABLE': 'این فایل در Google Drive نگه‌داری می‌شود و فعلاً در دسترس نیست. کمی بعد دوباره امتحان کنید.',
 
   // ---- errors (machine codes from the API → user text)

@@ -26,7 +26,7 @@ interface Row {
   r2_key: string;
 }
 const row = (id: string) => env.DB.prepare('SELECT id, tier, drive_id, deleted_at, purged_at, r2_key FROM files WHERE id = ?').bind(id).first<Row>() as Promise<Row>;
-const hasR2 = async (id: string) => (await env.FILES.get((await row(id)).r2_key)) !== null;
+const hasR2 = async (id: string) => (await env.FILES!.get((await row(id)).r2_key)) !== null;
 const age = (id: string, ms: number) => env.DB.prepare('UPDATE files SET created_at = ? WHERE id = ?').bind(Date.now() - ms, id).run();
 
 async function newFile(owner: TestUser, name: string, bytes: Uint8Array, ageMs = 0) {
@@ -125,7 +125,7 @@ describe('cold file tier: offload from R2 to Google Drive', () => {
 
   it('refuses to move a file whose R2 copy no longer matches its checksum', async () => {
     const f = await newFile(alice, 'rot.txt', text('original'), 10 * DAY);
-    await env.FILES.put((await row(f.id)).r2_key, text('tampered')); // same size, different content
+    await env.FILES!.put((await row(f.id)).r2_key, text('tampered')); // same size, different content
     const report = await offloadFiles(E, { force: true, drive: testDrive(), policy: policy() });
     expect(report.failed).toBe(1);
     expect((await row(f.id)).tier).toBe('r2');
@@ -538,7 +538,7 @@ describe('FileStore internals', () => {
   it('reports a missing blob as missing, not as an error', async () => {
     const u = await registerUser('miss');
     const f = await newFile(u, 'lost.txt', text('lost'));
-    await env.FILES.delete((await row(f.id)).r2_key);
+    await env.FILES!.delete((await row(f.id)).r2_key);
     expect(await new FileStore(E, testDrive()).bytes((await row(f.id)) as never)).toBeNull();
     expect(await new FileStore(E, testDrive()).exists((await row(f.id)) as never)).toBe(false);
   });

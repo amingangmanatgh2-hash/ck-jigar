@@ -193,6 +193,7 @@ export const en = {
   'attach.remove': 'Remove {name}',
   'attach.tooLarge': '“{name}” is larger than {mb} MB',
   'attach.tooMany': 'You can attach at most {n} files',
+  'attach.unavailable': 'File storage is not connected on this server, so files cannot be attached.',
   'voice.start': 'Voice input',
   'voice.stop': 'Stop recording',
   'voice.recording': 'Recording…',
@@ -489,6 +490,7 @@ export const en = {
   'storage.attention.drive_auth_failed': 'Google Drive rejected the saved token (it was revoked or has expired; if this happens every week, the Google consent screen is still in "Testing" and must be set to "In production"). New files stay in R2, so the bucket may fill up. Create a new token with "npm run drive:token" and update the GOOGLE_REFRESH_TOKEN secret.',
   'storage.attention.drive_full': 'The connected Google Drive is full. New files stay in R2 until space is freed; reading and deleting keep working.',
   'storage.attention.drive_degraded': 'Google Drive keeps failing temporarily. The job retries automatically.',
+  'storage.attention.r2_not_connected': 'The R2 file bucket is not connected: this server runs without file storage, so files and photos cannot be sent. Switch R2 on in Cloudflare (it needs a payment method; the monthly free allowance is enough) and run the deployment again (docs/deploy.md).',
   'storage.attention.r2_filling_without_drive': 'The R2 bucket is filling up and Google Drive is not connected. Connect Drive (docs/storage-drive.md) to move old files out of Cloudflare.',
   'storage.policy': 'Files move to Drive after {days} days, or when they are larger than {size} (once they have been stored for {minutes} min).',
   'storage.account': 'Google account: {used} of {limit} used',
@@ -507,6 +509,8 @@ export const en = {
   'storage.skipped.auth_failed': 'Google Drive authorisation is lost. Fix the token first.',
   'storage.skipped.quota_full': 'Google Drive is full.',
   'storage.skipped.throttled': 'The job ran a moment ago.',
+  'err.INVALID_UPLOAD': 'The upload could not be read. Please choose the file again.',
+  'err.FILE_STORAGE_NOT_CONNECTED': 'File storage is not connected on this server, so files cannot be sent or opened.',
   'err.FILE_STORAGE_UNAVAILABLE': 'This file is stored in Google Drive, which cannot be reached right now. Please try again later.',
 
   // ---- errors (machine codes from the API → user text)

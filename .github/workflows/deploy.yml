@@ -147,14 +147,20 @@ jobs:
           GROQ_LINES=$(sed -E 's/\x1b\[[0-9;]*m//g' deploy.log | grep -E '^\[deploy\] (WARNING: )?Groq' | cut -c1-400 || true)
           if [ -n "$GROQ_LINES" ]; then { echo; echo '```'; echo "$GROQ_LINES"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
       - name: Check that it answers like AMIN CHAT
+        id: smoke
         if: success() && steps.ask.outputs.mode == 'deploy' && (inputs.smoke_url != '' || steps.address.outputs.url != '')
         env:
           TARGET: ${{ inputs.smoke_url || steps.address.outputs.url }}
           GROQ_PROVIDED: ${{ secrets.GROQ_API_KEY != '' || steps.bundle.outputs.groq != '' }}
+          AMIN_R2: ${{ steps.preflight.outputs.r2 }}
         run: |
-          # a new workers.dev address can take a minute to become reachable
-          for i in $(seq 1 12); do
-            if curl -fsS "${TARGET%/}/api/health" | tee health.json | grep -q '"service":"amin-chat"'; then
+          # A brand-new workers.dev address can take a few minutes to become reachable from here (the name has to spread and get a
+          # certificate), so this waits up to about 5 minutes and remembers WHY each attempt failed: the annotations are all that can be
+          # read without opening the log.
+          LAST="no attempt yet"
+          for i in $(seq 1 30); do
+            CODE=$(curl -sS -o health.json -w '%{http_code}' --max-time 10 "${TARGET%/}/api/health" 2>curl.err || true)
+            if [ "$CODE" = "200" ] && grep -q '"service":"amin-chat"' health.json; then
               echo; echo "OK: ${TARGET%/}/api/health"
               # which AI services does the live service have credentials for? (yes/no only; whether a model really answers is what
               # "Models & usage > Check availability" finds out after signing in)
@@ -163,23 +169,30 @@ jobs:
               fi
               WAI=$(jq -r '.ai["workers-ai"]' health.json 2>/dev/null || echo unknown)
               GROQ=$(jq -r '.ai.groq' health.json 2>/dev/null || echo unknown)
-              echo "AI services with credentials on the live service: Workers AI=$WAI, Groq=$GROQ"
+              FILES=$(jq -r '.storage.files' health.json 2>/dev/null || echo unknown)
+              echo "AI services with credentials on the live service: Workers AI=$WAI, Groq=$GROQ; file storage (R2)=$FILES"
               {
                 echo
-                echo "| AI service | connected |"
+                echo "| Service | connected |"
                 echo "|---|---|"
                 echo "| Cloudflare Workers AI | $WAI |"
                 echo "| Groq | $GROQ |"
+                echo "| File storage (R2) | $FILES |"
                 echo
-                echo "\"connected\" means the service has credentials. Whether each model really answers is found out by the real test requests of **Models & usage → Check availability** (administrator)."
+                echo "\"connected\" means the service has credentials or a bucket. Whether each model really answers is found out by the real test requests of **Models & usage → Check availability** (administrator)."
               } >> "$GITHUB_STEP_SUMMARY"
               [ "$WAI" = "true" ] || echo "::warning title=Workers AI::the live service has no Workers AI binding, so the main AI service is missing"
               if [ "$GROQ_PROVIDED" = "true" ] && [ "$GROQ" != "true" ]; then echo "::warning title=Groq::GROQ_API_KEY exists as a repository secret, but the live service does not show Groq as connected (see the Groq line of the deploy step)"; fi
+              # what the preflight decided about the bucket must be what is live
+              if [ "$AMIN_R2" = "off" ] && [ "$FILES" = "true" ]; then echo "::warning title=File storage::R2 was left out of this deployment, but the live service reports a file bucket"; fi
+              if [ "$AMIN_R2" != "off" ] && [ "$FILES" = "false" ]; then echo "::warning title=File storage::the live service reports no file bucket although R2 was expected to be in this deployment"; fi
               exit 0
             fi
-            echo "not ready yet (attempt $i of 12)"; sleep 10
+            LAST="HTTP $CODE $(head -c 160 curl.err | tr '\n' ' ')"
+            echo "not ready yet (attempt $i of 30): $LAST"; sleep 8
           done
-          echo "::error::${TARGET%/}/api/health did not answer like AMIN CHAT"; exit 1
+          echo "::error title=The service did not answer::${TARGET%/}/api/health did not answer like AMIN CHAT in about 5 minutes (last: $LAST). The Worker IS published: open the address in a browser. A brand-new workers.dev address can take a few minutes; if it still fails, run the deployment again."
+          exit 1
       - name: Check passed
         if: success() && steps.ask.outputs.mode == 'check'
         run: |
@@ -251,12 +264,13 @@ jobs:
         if: failure()
         env:
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
         run: |
           say() { # $1 = title, rest = text: one annotation, one line, percent signs escaped
             local t="$1"; shift; local x="$*"; x="${x//'%'/'%25'}"; echo "::error title=$t::${x:-no details; open the log of the red step}"
           }
           clean() { sed -E 's/\x1b\[[0-9;]*m//g' "$1" 2>/dev/null; }
-          if [ -s deploy.log ]; then say "Deploy failed" "$(clean deploy.log | grep -E '✘|ERROR|Error|error|failed|nobody can register|Could not ask|WARNING' | head -n 8 | cut -c1-300 | tr '\n' '|')"; fi
+          if [ "$DEPLOY_OUTCOME" = "failure" ] && [ -s deploy.log ]; then say "Deploy failed" "$(clean deploy.log | grep -E '✘|ERROR|Error|error|failed|nobody can register|Could not ask|WARNING' | head -n 8 | cut -c1-300 | tr '\n' '|')"; fi
           if [ -s preflight.log ] && ! [ -s test.log ]; then say "Nothing was published" "The preflight found problems: each one is its own annotation above, with the fix. Fix them (or the secrets), then run again."; fi
           if [ "$TESTS_OUTCOME" = "failure" ] && [ -s test.log ] && ! [ -s deploy.log ]; then say "Tests failed" "$(clean test.log | grep -E 'FAIL |not ok |AssertionError|Tests +[0-9]+ failed' | head -n 8 | cut -c1-300 | tr '\n' '|')"; fi
           if [ -s account.log ] && ! [ -s deploy.log ] && [ "$TESTS_OUTCOME" != "failure" ]; then say "Nothing was published" "$(clean account.log | grep -E '^\[address\]' | tail -n 3 | cut -c1-400 | tr '\n' '|')"; fi

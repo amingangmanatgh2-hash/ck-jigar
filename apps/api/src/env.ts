@@ -5,7 +5,13 @@ import type { UserHub } from './do/user-hub';
 export interface Env {
   // ---- bindings
   DB: D1Database;
-  FILES: R2Bucket;
+  /**
+   * File storage (R2). Optional: an account that has not switched R2 on (it needs a payment method) is deployed WITHOUT the bucket
+   * (`npm run deploy -- --no-r2`, which the deploy workflow does by itself). Everything but files works then; whatever would store or
+   * read file bytes answers "file storage is not connected" (HTTP 503, FILE_STORAGE_NOT_CONNECTED), `GET /api/health` says
+   * `storage.files: false`, and the web app disables attaching. See docs/deploy.md.
+   */
+  FILES?: R2Bucket;
   /**
    * Cloudflare Workers AI. Every AI feature goes through this binding — there are no canned responses anywhere.
    * Optional only so the app can start (and say so honestly) in a credential-less local dev environment.

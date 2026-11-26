@@ -73,7 +73,7 @@ export const approval = (o: Partial<ApprovalDto> = {}): ApprovalDto => ({
 });
 
 export const storageStatus = (o: Omit<Partial<StorageStatusDto>, 'cold'> & { cold?: Partial<StorageStatusDto['cold']> } = {}): StorageStatusDto => ({
-  hot: { files: 12, bytes: 3 * 1024 ** 2, softLimitBytes: 8 * 1024 ** 3, overLimit: false },
+  hot: { files: 12, bytes: 3 * 1024 ** 2, softLimitBytes: 8 * 1024 ** 3, overLimit: false, connected: true },
   policy: { afterDays: 7, largeBytes: 5 * 1024 ** 2, minAgeMinutes: 60 },
   lastRunAt: null,
   attention: null,

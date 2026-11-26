@@ -23,9 +23,9 @@ GitHub runs the same on every push and pull request (`.github/workflows/ci.yml`:
 | Layer | Files | Tests | Runs on |
 |---|---|---|---|
 | Scripts and relay | 6 | 153 | Node's built-in test runner |
-| API (`apps/api/test`) | 16 | 320 | **real workerd** (Cloudflare's own runtime), real SQLite-backed D1, Durable Objects, R2 |
-| Web (`apps/web/test`) | 22 | 239 | jsdom (one file in plain Node for WebCrypto) |
-| **Total** | **44** | **712** | |
+| API (`apps/api/test`) | 17 | 331 | **real workerd** (Cloudflare's own runtime), real SQLite-backed D1, Durable Objects, R2 |
+| Web (`apps/web/test`) | 23 | 251 | jsdom (one file in plain Node for WebCrypto) |
+| **Total** | **46** | **735** | |
 
 ## How real is "real"? The three doubles
 
@@ -39,7 +39,7 @@ The API tests do not mock the application. They run the Worker's actual code (`a
 
 Production code cannot tell: it calls `env.AI.run(...)` and `fetch` as usual. **A double proves our code handles the responses we *believe* the real service returns; it cannot prove those beliefs.** That is the single biggest caveat of this test suite; see "Not verified" below. None of the doubles exists in production code, which has no canned or simulated model output (`AI_NOT_CONNECTED` when no provider is connected). A unit test fails if any model id of the registry (Workers AI or Groq) or a `@cf/` prefix appears anywhere except `apps/api/src/ai/models.ts`. Groq is plain HTTP, so `fake-groq` is reached through a service binding the Worker's `GROQ_API` setting points at (the setting exists only in the test configuration; production always calls `api.groq.com`). The Groq key is **not** set globally in the tests, because Groq answers the `fast` role first and would then change every other suite; suites that want it call `groqOn()` / `groqOff()` (`test/groq-helpers.ts`).
 
-## API suites (320 tests on workerd)
+## API suites (331 tests on workerd)
 
 | File | Tests | What it checks |
 |---|---|---|
@@ -53,6 +53,7 @@ Production code cannot tell: it calls `env.AI.run(...)` and `fetch` as usual. **
 | `auth.test.ts` | 17 | Register, login, sessions, password change, rate limiting, admin role, **a disabled account is rejected at once, cannot log in and is hidden**, **the password-hash cost setting (`PASSWORD_HASH_ITERATIONS`): used by register and change-password, recorded in the hash, upgraded at sign-in, never downgraded, never overwriting a password changed in the meantime** |
 | `memory.test.ts` | 11 | Memory is manageable (view, edit, delete, disable, suggestions) and **never leaks across users** |
 | `files.test.ts` | 6 | Upload validation and file access |
+| `no-files.test.ts` | 11 | A deployment **without the R2 bucket** (the same Worker code run with an environment that has no `FILES`): the health document says `storage.files: false`; an upload is refused with 503 before the body is read; `storeFile` refuses for people and for the AI; existing files stay listed but cannot be read, and a delete is accepted without claiming the bytes are gone; files already in Drive can still be read; the administrator's status says the bucket is missing and the offload job leaves a file that is due alone; the image tool is not offered; everything unrelated (sign-in, conversations, agents) keeps working |
 | `storage.test.ts` | 34 | The cold file tier: offload from R2 to Google Drive, reading, access control, deleting, Drive connection problems, admin API, cron |
 | `drive-client.test.ts` | 11 | The Google Drive client against the fake Google |
 | `request-id.test.ts` | 9 | `X-Request-Id` on every response and its CORS exposure |
@@ -64,7 +65,7 @@ Production code cannot tell: it calls `env.AI.run(...)` and `fetch` as usual. **
 
 Many of these are written as attacks, not just happy paths: a second user trying to read, send, select from, cancel or attach someone else's things; a forged approval payload; a denied `@AMINAI` mention that must post nothing; over-quota and over-rate calls.
 
-## Web suites (239 tests in jsdom)
+## Web suites (251 tests in jsdom)
 
 | File | Tests | What it checks |
 |---|---|---|
@@ -73,10 +74,11 @@ Many of these are written as attacks, not just happy paths: a second user trying
 | `streams.test.tsx`, `deltas.test.ts` | 17 + 6 | Streaming answers: ordering, de-duplication by `offset`, no loss across screen changes |
 | `outbox.test.ts`, `apiTransport.test.ts`, `realtime.test.ts` | 17 + 14 + 16 | Offline-tolerant exactly-once sending, request transport and retries, WebSocket and long-poll |
 | `aiThread.test.ts`, `runs.test.ts` | 15 + 9 | AI conversation state and the run / step / approval state |
-| `MessageBubble`, `Composer`, `ApprovalCard`, `Connection`, `StorageSection`, `Markdown` | 9, 8, 7, 10, 8, 6 | Components, including that Markdown never renders raw HTML or loads an image from an address in an answer |
+| `MessageBubble`, `Composer`, `ApprovalCard`, `Connection`, `StorageSection`, `Markdown` | 9, 8, 7, 10, 10, 6 | Components, including that Markdown never renders raw HTML or loads an image from an address in an answer |
 | `Providers.test.tsx` | 10 | The Models page with two providers (which services are connected and where each model runs; the Groq privacy note only when Groq is connected; "Groq is not connected" while Workers AI still is; one warning and no model shown ready when no service is connected; the same messages in Persian) and the agent picker's own icon for the Quick agent; the run panel's **Open chat** button (opens an existing chat only when the user taps; starts a chat with a person who has none yet only on tap, then opens it; shows the reason and stays put when that fails; no button when the step found nothing) |
 | `locales.test.ts` | 8 | Persian has exactly English's keys and placeholders, is really Persian, every error code the API can send has a text in both languages, `dir` and `lang` switch correctly |
-| `e2ee.test.ts`, `session.test.tsx`, `text.test.tsx`, `useStickToBottom.test.tsx` | 7, 6, 6, 5 | WebCrypto round-trips, session handling, text helpers, scroll behaviour |
+| `e2ee.test.ts`, `session.test.tsx`, `text.test.tsx`, `useStickToBottom.test.tsx` | 7, 9, 6, 5 | WebCrypto round-trips, session handling (including that the server's "no file storage" is learned at sign-in and forgotten at sign-out), text helpers, scroll behaviour |
+| `noFileStorage.test.tsx` | 7 | A server without file storage: only an explicit "no" switches attaching off (unknown, a failed request and an older server keep it on), the attach button explains itself and stays tappable, files that arrive by paste or drop are refused with the same reason, the texts exist in both languages |
 
 ## Scripts and relay (153 tests)
 

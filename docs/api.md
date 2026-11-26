@@ -39,7 +39,7 @@ Separately from request rates, **AI usage quota** is per user (defaults 300 000 
 
 | | |
 |---|---|
-| `GET /api/health` | `{ ok, service: "amin-chat", time, environment, endpoints: string[], ai: { "workers-ai": boolean, groq: boolean } }`. No authentication, no database access. `endpoints` are the alternative addresses (`PUBLIC_ENDPOINTS`) the apps may learn. `ai` says only whether each AI service has credentials in this deployment (the Workers AI binding, the `GROQ_API_KEY` secret): yes or no, never a value, and it is **not** a statement that a model answers (that is `/api/ai/models`). |
+| `GET /api/health` | `{ ok, service: "amin-chat", time, environment, endpoints: string[], ai: { "workers-ai": boolean, groq: boolean }, storage: { files: boolean } }`. No authentication, no database access. `endpoints` are the alternative addresses (`PUBLIC_ENDPOINTS`) the apps may learn. `ai` says only whether each AI service has credentials in this deployment (the Workers AI binding, the `GROQ_API_KEY` secret): yes or no, never a value, and it is **not** a statement that a model answers (that is `/api/ai/models`). `storage.files` is `false` when this deployment runs without the R2 bucket (an account that has not switched R2 on is deployed without it, see [deploy.md](deploy.md)): the web app then disables attaching. A client that gets no `storage` field (an older server) must treat files as available. |
 
 ## Authentication and account — `/api/auth`
 
@@ -88,7 +88,7 @@ A conversation has `type` `ai`, `direct` or `group`; `e2ee` marks a secret direc
 
 | | |
 |---|---|
-| `POST /` | Upload, at most 25 MiB. Either `multipart/form-data` with a `file` field, or the raw body with `Content-Type` and a URI-encoded `X-File-Name` header. → `{ file }`. The uploader owns the file; it becomes visible to a conversation's members only when it is attached to a message there. |
+| `POST /` | Upload, at most 25 MiB. Either `multipart/form-data` with a `file` field, or the raw body with `Content-Type` and a URI-encoded `X-File-Name` header. → `{ file }`. The uploader owns the file; it becomes visible to a conversation's members only when it is attached to a message there. Without the R2 bucket every upload (and every read of a file kept in R2) is refused at once with `503 FILE_STORAGE_NOT_CONNECTED`, before the body is read; files already moved to Google Drive can still be read. |
 | `GET /` | Own files: `?kind=image|audio|video|document|text|archive|other&q=&limit≤100`. |
 | `GET /:id` | Download. Allowed for the owner and for members of the conversation the file is attached to; anyone else gets `404`. Served with `Content-Security-Policy: default-src 'none'; sandbox` and `nosniff`; only known-safe types are shown inline (`?download=1` forces a download). Files that moved to Google Drive are fetched transparently through the Worker (after the access check); if Drive cannot be reached → `503 FILE_STORAGE_UNAVAILABLE`. |
 | `DELETE /:id` | Owner only. |
@@ -154,7 +154,7 @@ Run status: `pending` (در انتظار) → `planning` (در حال برنام
 | `GET /overview?days=` (1–60, default 7) | `{ days, byUser[] (top 25 by tokens), byModel[] (tokens, requests, errors, fallbacks), runs: { <status>: count } }`. |
 | `GET /users/:id/usage`, `PUT /users/:id/quota` | Read usage; set `{ dailyTokens, dailyRequests, monthlyTokens }` (each `null` = deployment default). Audited. |
 | `POST /models/refresh` | As `/api/ai/models/refresh`. |
-| `GET /storage`, `POST /storage/check`, `POST /storage/offload` | File storage status (R2 / Google Drive health), re-check Drive, run the offload now. See [storage-drive.md](storage-drive.md). |
+| `GET /storage`, `POST /storage/check`, `POST /storage/offload` | File storage status (R2 / Google Drive health), re-check Drive, run the offload now. See [storage-drive.md](storage-drive.md). `hot.connected` is `false` and `attention` is `r2_not_connected` when there is no R2 bucket; the offload then does nothing. |
 
 An admin has **no** endpoint that reads other people's messages or memory.
 
