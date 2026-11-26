@@ -41,18 +41,28 @@ async function statusOf(url) {
   }
 }
 
+function titleOf(body) {
+  const title = /<title[^>]*>([\s\S]{0,120}?)<\/title>/i.exec(body);
+  return title ? title[1].trim() : body.slice(0, 60);
+}
+
 async function main() {
   const panel = await statusOf('https://zeus-lite.amin-ck.workers.dev/?debug=1');
-  say('panel', `${panel.status} ${panel.body}`);
+  say('panel', `${panel.status} title="${titleOf(panel.body)}"`);
 
-  const list = wrangler(['deployments', 'list', '--name', 'zeus-lite']);
-  say('deployments', list.out.slice(-260) || `exit ${list.code}`);
+  const old = await statusOf('https://amin-chat.amin-ck.workers.dev/api/health');
+  say('oldWorker', `${old.status} ${old.body.slice(0, 60)}`);
+
+  const plain = await statusOf('https://zeus-lite.amin-ck.workers.dev/');
+  say('panelNoDebug', `${plain.status} title="${titleOf(plain.body)}"`);
 
   // the same bundle under another name: a fresh deployment of a fresh worker
   const probe = wrangler(['deploy', '--config', 'wrangler.generated.jsonc', '--name', probeName]);
   say('probeDeploy', probe.out.slice(-200) || `exit ${probe.code}`);
+  await new Promise((resolve) => setTimeout(resolve, 6000));
   const probed = await statusOf(`https://${probeName}.amin-ck.workers.dev/?debug=1`);
-  say('probe', `${probed.status} ${probed.body}`);
+  say('probe', `${probed.status} title="${titleOf(probed.body)}"`);
+  say('probeDeployExit', probe.code);
 
   // a worker with no imports at all
   mkdirSync('/tmp/hello', { recursive: true });
@@ -60,7 +70,7 @@ async function main() {
   writeFileSync('/tmp/hello/wrangler.jsonc', '{"name":"zeus-hello","main":"index.js","compatibility_date":"2025-09-01"}\n');
   const hello = wrangler(['deploy', '--config', '/tmp/hello/wrangler.jsonc'], '/tmp/hello');
   const helloStatus = await statusOf('https://zeus-hello.amin-ck.workers.dev/');
-  say('hello', `${helloStatus.status} ${helloStatus.body} | ${hello.out.slice(-120)}`);
+  say('hello', `${helloStatus.status} title="${titleOf(helloStatus.body)}" exit ${hello.code} ${hello.out.slice(-120)}`);
 
   console.log(`::error title=Diagnose::${notes.join(' || ')}`);
 }
