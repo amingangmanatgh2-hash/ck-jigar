@@ -55,10 +55,14 @@ A VLESS panel that runs entirely on **Cloudflare Workers + D1**, plus an **Andro
 ```bash
 npm install
 npm test                      # ۳۷ تست: لینک‌ها، هدر VLESS، و کل API پنل روی SQLite واقعی
-cd worker && npx wrangler dev # پنل روی http://127.0.0.1:8787
+npm run build                 # Worker را به یک فایل می‌بندد (worker/dist/worker.js)
+npm run dev                   # پنل روی http://127.0.0.1:8787
 
-npm run deploy                # D1 می‌سازد، مایگریشن می‌زند، منتشر می‌کند و آدرس را می‌گوید
+npm run deploy                # بیلد + ساخت D1 + مایگریشن + انتشار + تست خودکار خود پنل
 ```
+
+Worker به‌صورت **یک فایل باندل‌شده** منتشر می‌شود (`scripts/build.mjs`) — بدون گراف ماژول و بدون import داینامیک،
+چون همان بود که باعث می‌شد Worker بعد از چند دقیقه بی‌تاب باشد و همهٔ درخواست‌ها «Worker threw exception» بدهند.
 
 GitHub Actions:
 
@@ -69,6 +73,7 @@ GitHub Actions:
 | `Android app` | `gradle assembleRelease` و آپلود APK روی ریلیز |
 | `Windows app` | `sing-box check` روی کانفیگ تولیدی، سپس ساخت `setup.exe` و آپلود |
 | `Cleanup Workers` | Worker‌های نوشته‌شده در `deploy/CLEANUP` را پاک می‌کند (پنل هیچ‌وقت) |
+| `Health` | وضعیت پنل، دیتابیس و تنظیمات Worker را در یک خط می‌گوید (فقط می‌خواند) |
 
 رازها: `DEPLOY_ENV` (شامل `CLOUDFLARE_ACCOUNT_ID` و `CLOUDFLARE_API_TOKEN`)؛ اختیاری `ADMIN_PASSWORD`.
 
@@ -78,6 +83,7 @@ GitHub Actions:
 
 ```
 worker/
+  dist/worker.js    خروجی بیلد: یک فایل، چیزی که واقعاً منتشر می‌شود
   src/index.js      ورودی: app.js را تنبل ایمپورت می‌کند تا خطا پیام بدهد نه صفحهٔ 1101
   src/app.js        روتر، ورود مدیر، API، /sub، /status
   src/vless.js      پارس هدر VLESS + رلهٔ TCP روی WebSocket
