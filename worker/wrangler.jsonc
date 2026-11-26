@@ -2,8 +2,7 @@
   // The Worker name becomes the workers.dev subdomain: https://<name>.<account>.workers.dev
   "name": "zeus-lite",
   "main": "src/index.js",
-  "compatibility_date": "2025-10-01",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_date": "2025-09-01",
   "observability": { "enabled": true },
   "d1_databases": [
     {

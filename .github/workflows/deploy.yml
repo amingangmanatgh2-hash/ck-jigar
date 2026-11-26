@@ -107,8 +107,9 @@ jobs:
             echo "$path → $(curl -sS -o /dev/null -w '%{http_code}' "https://zeus-lite.amin-ck.workers.dev$path")"
           done
           echo "--- tail ---"; head -c 1500 /tmp/tail.log
-          flat=$(head -c 1200 /tmp/tail.log | tr '\n\r' ' ' | tr -d '"')
-          echo "::error title=Worker tail::${flat:-(no events captured)}"
+          flat=$(head -c 400 /tmp/tail.log | tr '\n\r' ' ' | tr -d '"')
+          diag="bytes=$(wc -c < /tmp/script.js) marker=$(grep -c 'zeus:' /tmp/script.js || true) codes=$(for p in / /api/me /nope; do printf '%s:%s ' "$p" "$(curl -sS -o /dev/null -w '%{http_code}' "https://zeus-lite.amin-ck.workers.dev$p")"; done)"
+          echo "::error title=Diagnostics::$diag | settings: $(head -c 260 /tmp/settings.json | tr '\n\r' ' ') | tail: ${flat:-(none)}"
           echo "--- body ---"; head -c 400 /tmp/body.txt
 
       - name: What to write down
