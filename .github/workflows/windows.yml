@@ -53,19 +53,8 @@ jobs:
           windows/bin/sing-box.exe version
 
       - name: The generated config is one sing-box accepts
-        shell: pwsh
-        run: |
-          node -e "const { parseLink, buildSingBox } = require('./windows/core/config.js'); const fs = require('fs'); const link = 'vless://11111111-1111-4111-8111-111111111111@panel.example.com:443?encryption=none&type=ws&security=tls&host=panel.example.com&path=%2Fws&sni=panel.example.com&fp=chrome&alpn=h2,http1.1#sample'; const p = parseLink(link); if (!p) { throw new Error('the sample link did not parse'); } fs.writeFileSync('sample-singbox.json', JSON.stringify(buildSingBox(p), null, 2));"
-          Get-Content sample-singbox.json | Select-Object -First 12
-          $out = (& windows/bin/sing-box.exe check -c sample-singbox.json 2>&1 | Out-String)
-          $code = $LASTEXITCODE
-          Write-Host $out
-          if ($code -ne 0) {
-            $flat = ($out -replace "`r?`n", ' ').Substring(0, [Math]::Min(700, $out.Length))
-            Write-Host "::error title=sing-box rejected the config::$flat"
-            exit 1
-          }
-          Write-Host "::notice title=Config::sing-box accepts the configuration this app generates"
+        shell: bash
+        run: node windows/scripts/check-config.js
 
       - name: JavaScript parses
         working-directory: windows

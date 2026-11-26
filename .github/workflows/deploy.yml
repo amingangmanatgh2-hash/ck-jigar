@@ -79,6 +79,26 @@ jobs:
           code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/sub/aaaaaaaaaaaaaaaaaaaaaaaa")
           [ "$code" = "404" ] || { echo "::error title=Subscription::an unknown token answered $code instead of 404"; exit 1; }
           echo "::notice title=Live::panel, sign in, session and subscription all answer as expected"
+      - name: Why the Worker is unhappy (tail)
+        if: failure()
+        env:
+          DEPLOY_ENV: ${{ secrets.DEPLOY_ENV }}
+        run: |
+          set -uo pipefail
+          TOKEN=$(printf '%s\n' "$DEPLOY_ENV" | sed -nE 's/^(CLOUDFLARE_API_TOKEN|CF_API_TOKEN)=//p' | head -1 | tr -d '\r' | tr -d '"' | tr -d "'")
+          ACCOUNT=$(printf '%s\n' "$DEPLOY_ENV" | sed -nE 's/^(CLOUDFLARE_ACCOUNT_ID|CF_ACCOUNT_ID)=//p' | head -1 | tr -d '\r' | tr -d '"' | tr -d "'")
+          export CLOUDFLARE_API_TOKEN="$TOKEN" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT"
+          if [ -z "$TOKEN" ]; then echo "::error title=Tail::no token in DEPLOY_ENV"; exit 0; fi
+          (cd worker && npx wrangler tail zeus-lite --format json > /tmp/tail.log 2>&1 &)
+          sleep 12
+          curl -sS -o /tmp/body.txt -w 'status %{http_code}\n' "https://zeus-lite.amin-ck.workers.dev/?debug=1"
+          sleep 6
+          pkill -f "wrangler tail" || true
+          echo "--- tail ---"; head -c 1500 /tmp/tail.log
+          flat=$(head -c 1200 /tmp/tail.log | tr '\n\r' ' ' | tr -d '"')
+          echo "::error title=Worker tail::${flat:-(no events captured)}"
+          echo "--- body ---"; head -c 400 /tmp/body.txt
+
       - name: What to write down
         run: |
           {
