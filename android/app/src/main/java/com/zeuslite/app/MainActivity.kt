@@ -126,6 +126,7 @@ class Words(private val en: Boolean) {
     val choose get() = if (en) "Tap a config, then connect" else "یک کانفیگ را انتخاب و وصل شوید"
 }
 
+@Composable
 private fun ZeusTheme(content: @Composable () -> Unit) {
     androidx.compose.material3.MaterialTheme(
         colorScheme = androidx.compose.material3.darkColorScheme(
