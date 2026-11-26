@@ -9,7 +9,6 @@
  *   3. does the same panel work under a different worker name (so: the code, or this deployment)?
  */
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { credentials } from './env.mjs';
@@ -47,6 +46,7 @@ function titleOf(body) {
 }
 
 async function main() {
+  const { accountId, token } = credentials();
   const panel = await statusOf('https://zeus-panel.amin-ck.workers.dev/?debug=1');
   say('panel', `${panel.status} title="${titleOf(panel.body)}"`);
 
@@ -56,25 +56,6 @@ async function main() {
   const plain = await statusOf('https://zeus-panel.amin-ck.workers.dev/');
   say('panelNoDebug', `${plain.status} title="${titleOf(plain.body)}"`);
 
-  // the same bundle under another name: a fresh deployment of a fresh worker
-  const probe = wrangler(['deploy', '--config', 'wrangler.generated.jsonc', '--name', probeName]);
-  say('probeDeploy', probe.out.slice(-200) || `exit ${probe.code}`);
-  await new Promise((resolve) => setTimeout(resolve, 6000));
-  const probed = await statusOf(`https://${probeName}.amin-ck.workers.dev/?debug=1`);
-  say('probe', `${probed.status} title="${titleOf(probed.body)}"`);
-  say('probeDeployExit', probe.code);
-
-  // which databases does the account actually have, and do they match the binding?
-  const { accountId, token } = credentials();
-  const listed = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database?per_page=100`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-    .then((r) => r.json())
-    .catch((err) => ({ error: String(err) }));
-  const databases = (listed.result ?? []).map((db) => `${db.name}:${db.uuid ?? db.id}`);
-  say('databases', databases.join(', ') || JSON.stringify(listed).slice(0, 200));
-
-  // the settings of the old, always-500 script next to a working one: the difference is the answer
   const settingsOf = async (name) => {
     const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${name}/settings`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -83,30 +64,7 @@ async function main() {
     const r = json.result ?? {};
     return `date=${r.compatibility_date} flags=${JSON.stringify(r.compatibility_flags)} usage=${r.usage_model} bindings=${JSON.stringify((r.bindings ?? []).map((b) => `${b.type}:${b.name}`))}`;
   };
-  say('settingsOld', await settingsOf('zeus-lite').catch((e) => String(e)));
-  say('settingsWorking', await settingsOf('zeus-dbtest').catch((e) => String(e)));
-
-  const generated = JSON.parse(readFileSync(`${workerDir}wrangler.generated.jsonc`, 'utf8'));
-  const bound = generated.d1_databases?.[0]?.database_id;
-  say('bound', bound);
-  const real = (listed.result ?? []).find((db) => db.name === 'zeus-db');
-  const realId = real?.uuid ?? real?.id;
-  say('realZeusDb', realId ?? 'missing');
-
-  for (const [name, id] of [
-    ['zeus-dbtest', realId],
-  ]) {
-    if (!id) {
-      say(name, 'no database to bind');
-      continue;
-    }
-    const config = { ...generated, name, d1_databases: [{ binding: 'DB', database_name: 'zeus-db', database_id: id, migrations_dir: 'migrations' }] };
-    writeFileSync(`${workerDir}wrangler.dbtest.jsonc`, JSON.stringify(config, null, 2));
-    const deployed = wrangler(['deploy', '--config', 'wrangler.dbtest.jsonc']);
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-    const status = await statusOf(`https://${name}.amin-ck.workers.dev/?debug=1`);
-    say(name, `${status.status} title="${titleOf(status.body)}" exit ${deployed.code} ${deployed.out.slice(-90)}`);
-  }
+  say('settings', await settingsOf('zeus-panel').catch((err) => String(err)));
 
   console.log(`::error title=Diagnose::${notes.join(' || ')}`);
 }

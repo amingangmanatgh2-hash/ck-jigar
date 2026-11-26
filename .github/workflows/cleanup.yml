@@ -1,0 +1,27 @@
+# Deletes the Workers named in `deploy/CLEANUP`, one per line. Push a change to that file to run it.
+# The panel (zeus-panel) is refused, whatever the file says.
+name: Cleanup Workers
+
+on:
+  push:
+    branches: [Main, 'arena/**']
+    paths: ['deploy/CLEANUP']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DEPLOY_ENV: ${{ secrets.DEPLOY_ENV }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node scripts/cleanup.mjs deploy/CLEANUP
