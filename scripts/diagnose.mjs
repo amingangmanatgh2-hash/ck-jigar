@@ -107,7 +107,9 @@ async function main() {
   tail.kill('SIGKILL');
   say('tail', tailText.replace(/\s+/g, ' ').slice(-600) || '(nothing)');
 
-  console.log(`::error title=Diagnose::${notes.join(' || ')}`);
+  const healthy = panel.status === 200;
+  const level = healthy ? 'notice' : 'error';
+  console.log(`::${level} title=${healthy ? 'Healthy' : 'Unhealthy'}::${notes.join(' || ')}`);
   // wrangler tail leaves a child holding the pipes open; do not wait for it
   process.exit(0);
 }
