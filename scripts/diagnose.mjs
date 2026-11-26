@@ -64,16 +64,37 @@ async function main() {
   say('probe', `${probed.status} title="${titleOf(probed.body)}"`);
   say('probeDeployExit', probe.code);
 
-  // the same panel without the database binding: is the binding what stops the isolate from starting?
+  // which databases does the account actually have, and do they match the binding?
+  const { accountId, token } = credentials();
+  const listed = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database?per_page=100`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+    .then((r) => r.json())
+    .catch((err) => ({ error: String(err) }));
+  const databases = (listed.result ?? []).map((db) => `${db.name}:${db.uuid ?? db.id}`);
+  say('databases', databases.join(', ') || JSON.stringify(listed).slice(0, 200));
+
   const generated = JSON.parse(readFileSync(`${workerDir}wrangler.generated.jsonc`, 'utf8'));
-  say('d1', JSON.stringify(generated.d1_databases ?? []));
-  const without = { ...generated, name: 'zeus-nodb' };
-  delete without.d1_databases;
-  writeFileSync(`${workerDir}wrangler.nodb.jsonc`, JSON.stringify(without, null, 2));
-  const nodb = wrangler(['deploy', '--config', 'wrangler.nodb.jsonc']);
-  await new Promise((resolve) => setTimeout(resolve, 5000));
-  const nodbStatus = await statusOf('https://zeus-nodb.amin-ck.workers.dev/?debug=1');
-  say('noDatabase', `${nodbStatus.status} title="${titleOf(nodbStatus.body)}" exit ${nodb.code}`);
+  const bound = generated.d1_databases?.[0]?.database_id;
+  say('bound', bound);
+  const real = (listed.result ?? []).find((db) => db.name === 'zeus-db');
+  const realId = real?.uuid ?? real?.id;
+  say('realZeusDb', realId ?? 'missing');
+
+  for (const [name, id] of [
+    ['zeus-dbtest', realId],
+  ]) {
+    if (!id) {
+      say(name, 'no database to bind');
+      continue;
+    }
+    const config = { ...generated, name, d1_databases: [{ binding: 'DB', database_name: 'zeus-db', database_id: id, migrations_dir: 'migrations' }] };
+    writeFileSync(`${workerDir}wrangler.dbtest.jsonc`, JSON.stringify(config, null, 2));
+    const deployed = wrangler(['deploy', '--config', 'wrangler.dbtest.jsonc']);
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    const status = await statusOf(`https://${name}.amin-ck.workers.dev/?debug=1`);
+    say(name, `${status.status} title="${titleOf(status.body)}" exit ${deployed.code} ${deployed.out.slice(-90)}`);
+  }
 
   console.log(`::error title=Diagnose::${notes.join(' || ')}`);
 }
