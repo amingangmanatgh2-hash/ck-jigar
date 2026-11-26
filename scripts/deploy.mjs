@@ -127,6 +127,10 @@ async function main() {
     return;
   }
 
+  console.log('0/4  bundling the Worker');
+  const bundled = spawnSync('node', [`${root}scripts/build.mjs`], { encoding: 'utf8' });
+  if (bundled.status !== 0) throw new Error(`the bundle failed:\n${bundled.stdout ?? ''}${bundled.stderr ?? ''}`);
+
   console.log(`1/4  asking Cloudflare for the database "${DB_NAME}"`);
   const databaseId = await ensureDatabase(accountId);
   console.log(`     ${DB_NAME} = ${databaseId}`);

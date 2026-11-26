@@ -27,6 +27,8 @@ jobs:
       - run: npm ci
       - name: Tests
         run: npm test
+      - name: Bundle
+        run: npm run build
       - name: The Worker bundles for Cloudflare
         run: npx wrangler deploy --dry-run --outdir /tmp/zeus-dist --config wrangler.jsonc
         working-directory: worker

@@ -5,9 +5,10 @@
   "description": "VLESS config panel on Cloudflare Workers + D1, with an Android client and a Windows client",
   "type": "module",
   "scripts": {
+    "build": "node scripts/build.mjs",
     "test": "node --test worker/test/*.test.mjs",
-    "dev": "cd worker && wrangler dev",
-    "deploy": "cd worker && wrangler deploy",
+    "dev": "node scripts/build.mjs && cd worker && wrangler dev",
+    "deploy": "node scripts/deploy.mjs",
     "db:migrate": "cd worker && wrangler d1 migrations apply zeus-db --remote",
     "db:create": "cd worker && wrangler d1 create zeus-db"
   },
