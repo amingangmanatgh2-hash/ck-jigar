@@ -196,7 +196,6 @@ function buildSingBox(profile, { listenPort = 2080, log = 'warn' } = {}) {
       rules: [{ ip_is_private: true, outbound: 'direct' }],
       final: 'proxy',
       auto_detect_interface: true,
-      default_domain_resolver: 'dns-proxy',
     },
     experimental: {
       cache_file: { enabled: true },
