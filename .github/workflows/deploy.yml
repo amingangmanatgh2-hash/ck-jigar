@@ -49,8 +49,15 @@ jobs:
         run: |
           set -euo pipefail
           echo "checking $URL"
-          page=$(curl -fsS "$URL/")
-          echo "$page" | grep -q 'ZEUS LITE' || { echo "::error title=Page::the panel page did not load"; exit 1; }
+          sleep 4
+          code=$(curl -sS -o /tmp/page.html -w '%{http_code}' "$URL/")
+          echo "GET / → $code"
+          if [ "$code" != "200" ]; then
+            echo "--- body ---"; head -c 2000 /tmp/page.html; echo
+            echo "::error title=Page::the panel page answered $code"
+            exit 1
+          fi
+          grep -q 'ZEUS LITE' /tmp/page.html || { echo "::error title=Page::the panel page did not load"; exit 1; }
 
           code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/me")
           [ "$code" = "401" ] || { echo "::error title=Auth::/api/me answered $code instead of 401"; exit 1; }

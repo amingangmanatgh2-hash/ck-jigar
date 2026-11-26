@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self'"
+    />
+    <title>Zeus Lite</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="titlebar"></div>
+
+    <header class="top">
+      <div class="brand">
+        <div class="mark">Z</div>
+        <div>
+          <div class="name">ZEUS LITE</div>
+          <div class="tag" id="tagline">کانفیگ‌های سریع</div>
+        </div>
+      </div>
+      <div class="langs">
+        <button class="chip" data-lang="fa">فا</button>
+        <button class="chip" data-lang="en">EN</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="orb" id="orb">
+          <span class="ring"></span>
+          <span class="ring second"></span>
+          <button id="power" aria-label="connect"><span id="powerIcon">⏻</span></button>
+        </div>
+        <div class="status" id="status">قطع</div>
+        <div class="active" id="active">یک کانفیگ را انتخاب کنید</div>
+        <div class="error" id="error" hidden></div>
+      </section>
+
+      <div class="row-head">
+        <h2 id="listTitle">کانفیگ‌ها</h2>
+        <span class="count" id="count">0</span>
+        <div class="grow"></div>
+        <button class="btn small" id="addBtn">＋ <span id="addLabel">افزودن</span></button>
+      </div>
+
+      <ul id="list" class="list"></ul>
+      <div class="empty" id="empty">هنوز کانفیگی نیست. لینک را بچسبانید یا لینک اشتراک را وارد کنید.</div>
+    </main>
+
+    <footer>
+      <button class="btn ghost" id="subBtn">☁ <span id="subLabel">لینک اشتراک</span></button>
+      <button class="btn ghost" id="logBtn">⌘ <span id="logLabel">لاگ</span></button>
+    </footer>
+
+    <dialog id="addDialog">
+      <h3 id="addTitle">افزودن کانفیگ</h3>
+      <p class="hint" id="addHint">لینک vless:// را بچسبانید.</p>
+      <textarea id="linkInput" rows="4" spellcheck="false" placeholder="vless://..."></textarea>
+      <div class="dialog-actions">
+        <button class="btn primary" id="saveLink">ذخیره</button>
+        <button class="btn ghost" data-close>انصراف</button>
+      </div>
+    </dialog>
+
+    <dialog id="subDialog">
+      <h3 id="subTitle">لینک اشتراک</h3>
+      <p class="hint" id="subHint">آدرس لینک اشتراک پنل را وارد کنید تا کانفیگ‌ها خودکار اضافه شوند.</p>
+      <input id="subInput" type="url" spellcheck="false" placeholder="https://…/sub/…" dir="ltr" />
+      <div class="dialog-actions">
+        <button class="btn primary" id="saveSub">به‌روزرسانی</button>
+        <button class="btn ghost" data-close>انصراف</button>
+      </div>
+    </dialog>
+
+    <dialog id="logDialog">
+      <h3 id="logTitle">لاگ</h3>
+      <pre id="logBody"></pre>
+      <div class="dialog-actions">
+        <button class="btn ghost" data-close>بستن</button>
+      </div>
+    </dialog>
+
+    <div class="toast" id="toast"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
