@@ -64,8 +64,9 @@ for (const name of targets) {
       { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
     );
     const body = await response.json().catch(() => ({}));
-    if (response.ok) deleted.push(name);
-    else failed.push(`${name}: ${(body.errors ?? []).map((e) => e.message).join('; ') || `HTTP ${response.status}`}`);
+    const message = (body.errors ?? []).map((e) => e.message).join('; ') || `HTTP ${response.status}`;
+    if (response.ok || /does not exist/i.test(message)) deleted.push(name);
+    else failed.push(`${name}: ${message}`);
   } catch (err) {
     failed.push(`${name}: ${err.message}`);
   }
