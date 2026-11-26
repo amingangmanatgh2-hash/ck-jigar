@@ -8,7 +8,7 @@
  *   2. what does `wrangler deployments list` say about the worker?
  *   3. does the same panel work under a different worker name (so: the code, or this deployment)?
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { credentials } from './env.mjs';
@@ -65,6 +65,35 @@ async function main() {
     return `date=${r.compatibility_date} flags=${JSON.stringify(r.compatibility_flags)} usage=${r.usage_model} bindings=${JSON.stringify((r.bindings ?? []).map((b) => `${b.type}:${b.name}`))}`;
   };
   say('settings', await settingsOf('zeus-panel').catch((err) => String(err)));
+
+  // is the database itself reachable?
+  try {
+    const db = (databasesList.result ?? []).find((entry) => entry.name === 'zeus-db');
+    const id = db?.uuid ?? db?.id;
+    const query = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${id}/query`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql: 'SELECT COUNT(*) AS users FROM users' }),
+    }).then((response) => response.json());
+    say('d1', JSON.stringify(query).slice(0, 220));
+  } catch (err) {
+    say('d1', String(err.message ?? err));
+  }
+
+  // the Worker's own words: wrangler tail while a request is made
+  const { token: tailToken, accountId: tailAccount } = credentials();
+  const tail = spawn('npx', ['--no-install', 'wrangler', 'tail', 'zeus-panel', '--format', 'pretty'], {
+    cwd: workerDir,
+    env: { ...process.env, CLOUDFLARE_API_TOKEN: tailToken, CLOUDFLARE_ACCOUNT_ID: tailAccount, WRANGLER_SEND_METRICS: 'false' },
+  });
+  let tailText = '';
+  tail.stdout.on('data', (chunk) => (tailText += String(chunk)));
+  tail.stderr.on('data', (chunk) => (tailText += String(chunk)));
+  await new Promise((resolve) => setTimeout(resolve, 12000));
+  await statusOf('https://zeus-panel.amin-ck.workers.dev/?debug=1');
+  await new Promise((resolve) => setTimeout(resolve, 6000));
+  tail.kill('SIGKILL');
+  say('tail', tailText.replace(/\s+/g, ' ').slice(-600) || '(nothing)');
 
   console.log(`::error title=Diagnose::${notes.join(' || ')}`);
 }
